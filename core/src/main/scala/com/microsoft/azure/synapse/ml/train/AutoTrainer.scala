@@ -6,7 +6,7 @@ package com.microsoft.azure.synapse.ml.train
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.contracts.{HasExcludedFeatureCols, HasFeaturesCol, HasLabelCol}
 import com.microsoft.azure.synapse.ml.param.EstimatorParam
-import org.apache.spark.ml.param.IntParam
+import org.apache.spark.ml.param.{IntParam, Param}
 import org.apache.spark.ml.{ComplexParamsWritable, Estimator, Model}
 
 /** Defines common inheritance and parameters across trainers.
@@ -38,5 +38,10 @@ trait AutoTrainer[TrainedModel <: Model[TrainedModel]] extends Estimator[Trained
   def setModel(value: Estimator[_ <: Model[_]]): this.type = set(model, value)
 
 
-  setDefault(numFeatures -> 0, excludedFeatureCols -> Array.empty[String])
+  val featureColumnsStr = new Param[String](this, "featureColumnsStr", "feature columns")
+  def getFeatureColumnsStr: String = $(featureColumnsStr)
+  def setFeatureColumnsStr(value: String): this.type = set(featureColumnsStr, value)
+
+
+  setDefault(numFeatures -> 0, excludedFeatureCols -> Array.empty[String], featureColumnsStr -> "")
 }

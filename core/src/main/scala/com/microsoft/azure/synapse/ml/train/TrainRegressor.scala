@@ -23,9 +23,6 @@ class TrainRegressor(override val uid: String) extends AutoTrainer[TrainedRegres
 
   def this() = this(Identifiable.randomUID("TrainRegressor"))
 
-  val featureColumnsStr = new Param[String](this, "featureColumnsStr", "feature columns")
-  def getFeatureColumnsStr: String = $(featureColumnsStr)
-  def setFeatureColumnsStr(value: String): this.type = set(featureColumnsStr, value)
 
   /** Doc for model to run.
     */
@@ -93,8 +90,12 @@ class TrainRegressor(override val uid: String) extends AutoTrainer[TrainedRegres
         }
       ).na.drop(Seq(labelColumn))
 
-      val nonFeatureColumns = labelColumn +: getExcludedFeatureCols
-      val featureColumns = convertedLabelDataset.columns.filter(col => !nonFeatureColumns.contains(col)).toSeq
+      val featureColumns = if (getFeatureColumnsStr != null && getFeatureColumnsStr.trim.nonEmpty) {
+        getFeatureColumnsStr.split("[,; ]+").map(_.trim).toSeq
+      } else {
+        val nonFeatureColumns = labelColumn +: getExcludedFeatureCols
+        convertedLabelDataset.columns.filter(col => !nonFeatureColumns.contains(col)).toSeq
+      }
 
       val featurizer = new Featurize()
         .setOutputCol(getFeaturesCol)
