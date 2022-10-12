@@ -4,19 +4,22 @@
 package com.microsoft.azure.synapse.ml.causal
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
+import com.microsoft.azure.synapse.ml.core.contracts.{HasFeaturesCol, HasLabelCol}
 import com.microsoft.azure.synapse.ml.train._
 import com.microsoft.azure.synapse.ml.core.schema.SchemaConstants
-import com.microsoft.azure.synapse.ml.featurize.{Featurize, FeaturizeUtilities}
 import com.microsoft.azure.synapse.ml.logging.BasicLogging
+import com.microsoft.azure.synapse.ml.stages.DropColumns
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.ml.{Estimator, _}
+import org.apache.spark.ml.{Estimator, Model, _}
 import org.apache.spark.ml.classification._
+import org.apache.spark.ml.feature.VectorAssembler
 import org.apache.spark.ml.linalg.DenseVector
 import org.apache.spark.ml.param._
+import org.apache.spark.ml.param.shared.HasWeightCol
 import org.apache.spark.ml.util._
-import org.apache.spark.sql._
+import org.apache.spark.sql.{DataFrame, _}
 import org.apache.spark.sql.types._
-import org.apache.spark.ml.regression.{DecisionTreeRegressor, GBTRegressor, GeneralizedLinearRegression, GeneralizedLinearRegressionModel, RandomForestRegressor, Regressor}
+import org.apache.spark.ml.regression.{GeneralizedLinearRegression, GeneralizedLinearRegressionModel, Regressor}
 
 
 /** Double ML estimators. The estimator follows the two stage process,
@@ -79,29 +82,46 @@ class LinearDMLEstimator(override val uid: String)
    */
   override def fit(dataset: Dataset[_]): LinearDMLModel = {
     logFit({
+      // treatment effect:
+      // 1. split sample, e.g. 50/50
+      // 2. use first sample data to fit treatment model and outcome model,
+      // 3. use two models on the second sample data to get residuals, apply regressor fit to get treatment effect T1 = lrm1.coefficients(0)
+      // 4. cross fitting to get another treatment effect, T2 = lrm2.coefficients(0)
+      // 5. final treatment effects = (T1 + T2) / 2
+      if (get(weightCol).isDefined) {
+        getTreatmentModel match {
+          case w: HasWeightCol => w.set(w.weightCol, getWeightCol)
+          case _ => throw new Exception("The defined treatment model does not support weightCol.")
+        }
+        getOutcomeModel match {
+          case w: HasWeightCol => w.set(w.weightCol, getWeightCol)
+          case _ => throw new Exception("The defined outcome model does not support weightCol.")
+        }
+      }
 
-      // Step 1 - Train treatment model and compute treatment residual,
-      // regarding to prediction column, we use probability column for classifier and prediction column for regression.
+      val preprocessedDF = if (get(featurizationModel).isDefined) {
+        getFeaturizationModel.fit(dataset).transform(dataset)
+      } else dataset
+
+      // Step 1 - split sample
+      val splits = preprocessedDF.randomSplit(getSampleSplitRatio)
+      val train = splits(0).cache()
+      val test = splits(1).cache()
+
+      // Step 2 - use first sample data to fit treatment model and outcome model
+      // Train treatment model, regarding to prediction column, we use probability column for classifier and prediction column for regression.
       val (treatmentEstimator, treatmentPredictionColName) = getTreatmentModel match {
         case classifier: ProbabilisticClassifier[_, _, _] => (
           new TrainClassifier().setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol)),
           classifier.getProbabilityCol
         )
         case regressor: Regressor[_, _, _] => (
-          new TrainRegressor().setModel(getTreatmentModel).setLabelCol(getTreatmentCol),
+          new TrainRegressor().setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol)),
           regressor.getPredictionCol
         )
       }
 
-      // Compute treatment residual
-      val computeTreatmentResiduals =
-        new ComputeResidualTransformer()
-          .setObservedCol(getTreatmentCol)
-          .setPredictedCol(treatmentPredictionColName)
-          .setOutputCol(SchemaConstants.TreatmentResidualColumn)
-
-      // Step 2 - Train outcome model and compute outcome residual,
-      // regarding to prediction column, we use probability column for classifier and prediction column for regression.
+      // Train outcome model, regarding to prediction column, we use probability column for classifier and prediction column for regression.
       val (outcomeEstimator, outcomePredictionColName) = getOutcomeModel match {
         case classifier: ProbabilisticClassifier[_, _, _] => (
           new TrainClassifier().setModel(getOutcomeModel).setLabelCol(getOutcomeCol).setExcludedFeatureCols(Array(getTreatmentCol)),
@@ -113,48 +133,89 @@ class LinearDMLEstimator(override val uid: String)
         )
       }
 
-      // Compute outcome residual
-      val computeOutcomeResiduals = new ComputeResidualTransformer()
-        .setObservedCol(getOutcomeCol)
-        .setPredictedCol(outcomePredictionColName)
-        .setOutputCol(SchemaConstants.OutcomeResidualColumn)
+      val testResidualDF = trainAndEnrichWithResiduals(
+        train,
+        test,
+        treatmentEstimator,
+        treatmentPredictionColName,
+        outcomeEstimator,
+        outcomePredictionColName
+      )
 
-      // Execute step 1 and 2 in pipeline
-      val pipelineModel = new Pipeline().setStages(
-        Array(treatmentEstimator, computeTreatmentResiduals, outcomeEstimator, computeOutcomeResiduals,
-        )).fit(dataset)
+      val trainResidualDF = trainAndEnrichWithResiduals(
+        test,
+        train,
+        treatmentEstimator,
+        treatmentPredictionColName,
+        outcomeEstimator,
+        outcomePredictionColName
+      )
 
-      // Step 3 - final regression
-      val scoredData = pipelineModel.transform(dataset).select("treatment_residual", "outcome_residual")
-      val convertedLabelDataset_finalModel = LinearDMLEstimator.convertRegressorLabel(scoredData, "outcome_residual")
-      val regressor = new GeneralizedLinearRegression().setFamily("gaussian").setLink("identity").setFitIntercept(false)
 
-      val regressor_final = LinearDMLEstimator.getEstimatorWithLabelFeaturesConfigured(regressor, "outcome_residual", getFeaturesCol)
-      val (oneHotEncodeCategoricals_finalModel, numFeatures_finalModel, _) = LinearDMLEstimator.getFeaturizeParams(regressor, getNumFeatures)
-      val featurizer_finalModel = new Featurize()
-        .setOutputCol(getFeaturesCol)
-        .setInputCols(Array("treatment_residual"))
-        .setOneHotEncodeCategoricals(oneHotEncodeCategoricals_finalModel)
-        .setNumFeatures(numFeatures_finalModel)
+      // Step 3 - final regressor
+      val va: Array[PipelineStage] = Array(
+        new VectorAssembler()
+        .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
+        .setOutputCol("treatmentResidualVec")
+        .setHandleInvalid("skip"),
+        new DropColumns().setCols(Array(SchemaConstants.TreatmentResidualColumn))
+      )
 
-      val featurized_finalModel = featurizer_finalModel.fit(convertedLabelDataset_finalModel)
-      val processedData_finalModel = featurized_finalModel.transform(convertedLabelDataset_finalModel)
-      processedData_finalModel.cache()
-      val fitFinalModel = regressor_final.fit(processedData_finalModel)
-      processedData_finalModel.unpersist()
+      val regressor = new GeneralizedLinearRegression()
+        .setLabelCol(SchemaConstants.OutcomeResidualColumn)
+        .setFeaturesCol("treatmentResidualVec")
+        .setFamily("gaussian")
+        .setLink("identity")
+        .setFitIntercept(false)
 
-      val pipeline_finalModel = new Pipeline().setStages(Array(featurized_finalModel, fitFinalModel)).fit(convertedLabelDataset_finalModel)
+      val pipeline_finalModel = new Pipeline().setStages(va :+ regressor).fit(testResidualDF)
+      val lrmT1 = pipeline_finalModel.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
+      val pipeline_finalModel2 = new Pipeline().setStages(va :+ regressor).fit(trainResidualDF)
+      val lrmT2 = pipeline_finalModel2.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
 
-      val lrm = pipeline_finalModel.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
-
-      // ate's confidence intervals = slope +/- t * SE Coef
-      val ci_lower = lrm.coefficients(0) - lrm.summary.tValues(0) * lrm.summary.coefficientStandardErrors(0)
-      val ci_higher = lrm.coefficients(0) + lrm.summary.tValues(0) * lrm.summary.coefficientStandardErrors(0)
+      val ate = (lrmT1.coefficients.asInstanceOf[DenseVector].values(0)
+        + lrmT2.coefficients.asInstanceOf[DenseVector].values(0)) / 2.0
 
       new LinearDMLModel()
-        .setATE(lrm.coefficients.asInstanceOf[DenseVector].values)
-        .setCI(Array(ci_lower, ci_higher))
+        .setATE(ate)
+
+      // Confidence intervals:  (spark cross validator?)
+      // 6. sampling with replacement (spark maybe have function to do it), redraw, // df.sample(true, )
+      // 7. with new sample, repeat 1~5, get another estimator, (can be parallel with above)
+      // do 6~7 for 2K times, get 2k estimator, 2.5% low end, 97.5% high end, pyspark has quantile function,
+      // (np.percentile([2k treatment effect], 0.025), np.percentile(x, 0.975)), find Spark version
+      // LASSO estimator at the fist stage
+
+      // Sarah: note 1, a, b, c,   d, e, f. => keep top 10 and put others to one
+      // Sarah: note 2, do not one-hot continuous features
+      // hasSampleWeight
     })
+  }
+
+  private def trainAndEnrichWithResiduals(train: Dataset[_],
+                                  test: Dataset[_],
+                                  treatmentEstimator: AutoTrainer[_ >: TrainedClassifierModel with TrainedRegressorModel <: Wrappable with Transformer with HasFeaturesCol with HasLabelCol with BasicLogging with ComplexParamsWritable] with BasicLogging,
+                                  treatmentPredictionColName: String,
+                                  outcomeEstimator: AutoTrainer[_ >: TrainedClassifierModel with TrainedRegressorModel <: Wrappable with Transformer with HasFeaturesCol with HasLabelCol with BasicLogging with ComplexParamsWritable] with BasicLogging,
+                                  outcomePredictionColName: String): DataFrame = {
+    val treatmentModel = treatmentEstimator.fit(train)
+    val outcomeModel = outcomeEstimator.fit(train)
+
+    // Step 3 - use second sample data to get predictions and compute residuals
+    val treamentDF = treatmentModel.transform(test)
+    val computeTreatmentResiduals =
+      new ComputeResidualTransformer()
+        .setObservedCol(getTreatmentCol)
+        .setPredictedCol(treatmentPredictionColName)
+        .setOutputCol(SchemaConstants.TreatmentResidualColumn)
+    val treatmentResidualDF = computeTreatmentResiduals.transform(treamentDF)
+
+    val outcomeDF = outcomeModel.transform(treatmentResidualDF)
+    val computeOutcomeResiduals = new ComputeResidualTransformer()
+      .setObservedCol(getOutcomeCol)
+      .setPredictedCol(outcomePredictionColName)
+      .setOutputCol(SchemaConstants.OutcomeResidualColumn)
+    computeOutcomeResiduals.transform(outcomeDF)
   }
 
   override def copy(extra: ParamMap): Estimator[LinearDMLModel] = {
@@ -174,31 +235,6 @@ object LinearDMLEstimator extends ComplexParamsReadable[LinearDMLEstimator] {
     StructType(treatmentSchema.fields :+ StructField(SchemaConstants.OutcomeResidualColumn, DoubleType))
   }
 
-  def getFeaturizeParams(model: Estimator[_ <: Model[_]], getNumFeatures: Int): (Boolean, Int, Boolean) = {
-    var oneHotEncodeCategoricals = true
-    var modifyInputLayer = false
-    // Create trainer based on the pipeline stage and set the parameters
-
-    val numFeatures: Int = model match {
-      case _: DecisionTreeClassifier | _: GBTClassifier | _: RandomForestClassifier | _: DecisionTreeRegressor | _: GBTRegressor | _: RandomForestRegressor =>
-        oneHotEncodeCategoricals = false
-        FeaturizeUtilities.NumFeaturesTreeOrNNBased
-      case _: MultilayerPerceptronClassifier =>
-        modifyInputLayer = true
-        FeaturizeUtilities.NumFeaturesTreeOrNNBased
-      case _ =>
-        FeaturizeUtilities.NumFeaturesDefault
-    }
-
-    val featuresToHashTo = if (getNumFeatures != 0) {
-      getNumFeatures
-    } else {
-      numFeatures
-    }
-
-    (oneHotEncodeCategoricals, featuresToHashTo, modifyInputLayer)
-  }
-
   def getEstimatorWithLabelFeaturesConfigured(estimator: Estimator[_ <: Model[_]], labelCol: String, featuresCol: String): Estimator[_ <: Model[_]] = {
     estimator match {
       case predictor: Predictor[_, _, _] =>
@@ -211,40 +247,6 @@ object LinearDMLEstimator extends ComplexParamsReadable[LinearDMLEstimator] {
       case _ => throw new Exception("Unsupported learner type " + estimator.getClass.toString)
     }
   }
-
-  def convertRegressorLabel(dataset: Dataset[_],
-                            labelColumn: String): DataFrame = {
-
-    // TODO: Handle DateType, TimestampType and DecimalType for label
-    // Convert the label column during train to the correct type and drop missings
-    val df_cast = dataset.withColumn(labelColumn,
-      col = dataset.schema(labelColumn).dataType match {
-        case _: IntegerType |
-             _: BooleanType |
-             _: FloatType |
-             _: ByteType |
-             _: LongType |
-             _: ShortType |
-             _: StringType =>
-          dataset(labelColumn).cast(DoubleType)
-        case _: DoubleType =>
-          dataset(labelColumn)
-        case default => throw new Exception("Unknown type: " + default.typeName +
-          ", for label column: " + labelColumn)
-      }
-    ).na.drop(Seq(labelColumn))
-
-
-    // For illegal cast (e.g. an invalid string to double), Spark won't fail and just return null for them. (It's default behavior `spark.sql.ansi.enabled=false`)
-    // So we do a simple count check to ensure casting has no failure
-    if (dataset.count() != df_cast.count()) {
-      throw new Exception("Invalid type: " +
-        "Regressors are not able to train on a string label column when it has invalid value and not able to be converted to numeric: " + labelColumn
-      )
-    }
-
-    df_cast
-  }
 }
 
 /** Model produced by [[LinearDMLEstimator]]. */
@@ -254,9 +256,9 @@ class LinearDMLModel(val uid: String)
 
   def this() = this(Identifiable.randomUID("LinearDMLModel"))
 
-  val ate = new Param[Array[Double]](this, "cate", "average treatment effect")
-  def getATE: Array[Double] = $(ate)
-  def setATE(v:Array[Double] ): this.type = set(ate, v)
+  val ate = new Param[Double](this, "cate", "average treatment effect")
+  def getATE: Double = $(ate)
+  def setATE(v: Double): this.type = set(ate, v)
 
   var ci = new Param[Array[Double]](this, "ci", "treatment effect's confidence interval")
   def getCI: Array[Double] = $(ci)

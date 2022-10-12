@@ -26,16 +26,6 @@ trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol wit
 
   val treatmentModel = new EstimatorParam(this, "treatmentModel", "treatment model to run")
   def getTreatmentModel: Estimator[_ <: Model[_]] = $(treatmentModel)
-
-  /** The currently supported classifiers are:
-   * Logistic Regression Classifier
-   * Decision Tree Classifier
-   * Random Forest Classifier
-   * Gradient Boosted Trees Classifier
-   * Naive Bayes Classifier
-   * Multilayer Perceptron Classifier
-   * In addition to any generic learner that inherits from Predictor.
-   */
   def setTreatmentModel(value: Estimator[_ <: Model[_]]) : this.type = {
     val isSupportedModel = value match {
       case regressor: Regressor[_,_,_] =>   true // for continuous treatment
@@ -53,17 +43,27 @@ trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol wit
   def setOutcomeModel(value: Estimator[_ <: Model[_]] ) : this.type = {
     val isSupportedModel = value match {
       case regressor: Regressor[_,_,_] =>   true // for continuous treatment
+      case classifier: ProbabilisticClassifier[_, _, _] => true
       case _ => false
     }
     if (!isSupportedModel)  {
-      throw new Exception("LinearDML only support regressor as outcome model")
+      throw new Exception("LinearDML only support regressor and ProbabilisticClassifier as outcome model")
     }
     set(outcomeModel, value)
   }
 
+  val featurizationModel = new EstimatorParam(this, "featurizeModel", "featurize model to run")
+  def getFeaturizationModel: Estimator[_ <: Model[_]] = $(featurizationModel)
+  def setFeaturizationModel(value: Estimator[_ <: Model[_]] ) : this.type =  set(featurizationModel, value)
+
+  val sampleSplitRatio: Param[Array[Double]] = new Param[Array[Double]](this, "SampleSplitRatio", "SampleSplitRatio", v => v.length == 2 && v.forall(_ > 0))
+  def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio)
+  def setSampleSplitRatio(value: Array[Double]): this.type = set(sampleSplitRatio, value)
+
   setDefault(
     discrete_treatment -> true,
     treatmentModel -> new LogisticRegression(),
-    outcomeModel -> new RandomForestRegressor()
+    outcomeModel -> new LogisticRegression(),
+    sampleSplitRatio -> Array(0.5, 0.5)
   )
 }
