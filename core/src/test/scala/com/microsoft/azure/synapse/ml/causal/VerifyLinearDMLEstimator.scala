@@ -34,9 +34,10 @@ class VerifyLinearDMLEstimator extends TestBase {
       .setTreatmentModel(new LogisticRegression())
       .setTreatmentCol(mockLabelColumn)
       .setOutcomeModel(new RandomForestRegressor())
-      .setOutcomeCol("col1")
+      .setOutcomeCol("col2")
 
     var ldmlModel = ldml.fit(mockDataset)
+    assert(ldmlModel.getATE != 0.0)
   }
 
   test("Get treatment effects with weight column") {
@@ -45,8 +46,21 @@ class VerifyLinearDMLEstimator extends TestBase {
       .setTreatmentCol(mockLabelColumn)
       .setOutcomeModel(new LogisticRegression())
       .setOutcomeCol("col1")
-      .setWeightCol("col2")
+      .setWeightCol("col3")
 
     var ldmlModel = ldml.fit(mockDataset)
+    assert(ldmlModel.getATE != 0.0)
+  }
+
+  test("Get treatment effects and confidence intervals") {
+    val ldml = new LinearDMLEstimator()
+      .setTreatmentModel(new LogisticRegression())
+      .setTreatmentCol(mockLabelColumn)
+      .setOutcomeModel(new RandomForestRegressor())
+      .setOutcomeCol("col2")
+      .setCICalcIterations(30)
+
+    var ldmlModel = ldml.fit(mockDataset)
+    assert(ldmlModel.getCI.length == 2)
   }
 }
