@@ -4,6 +4,7 @@ import com.microsoft.azure.synapse.ml.core.contracts.HasWeightCol
 import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClassifier}
 import org.apache.spark.ml.{Estimator, Model}
 import com.microsoft.azure.synapse.ml.param.EstimatorParam
+import org.apache.spark.ml.ParamInjections.HasParallelismInjected
 import org.apache.spark.ml.param.{Param, Params}
 import org.apache.spark.ml.regression.{RandomForestRegressor, Regressor}
 
@@ -19,14 +20,12 @@ trait HasOutcomeCol extends Params {
   def setOutcomeCol(value: String): this.type = set(outcome, value)
 }
 
-trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol with HasWeightCol {
-  val discrete_treatment: Param[Boolean] = new Param[Boolean](this, name="discrete_treatment", doc="discrete or continuous treatment")
-  def getDiscreteTreatment: Boolean = $(discrete_treatment)
-  def setDiscreteTreatment(value: Boolean): this.type = set(discrete_treatment, value)
+trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol with HasWeightCol with HasParallelismInjected {
 
   val treatmentModel = new EstimatorParam(this, "treatmentModel", "treatment model to run")
   def getTreatmentModel: Estimator[_ <: Model[_]] = $(treatmentModel)
   def setTreatmentModel(value: Estimator[_ <: Model[_]]) : this.type = {
+
     val isSupportedModel = value match {
       case regressor: Regressor[_,_,_] =>   true // for continuous treatment
       case classifier: ProbabilisticClassifier[_, _, _] => true
@@ -52,7 +51,7 @@ trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol wit
     set(outcomeModel, value)
   }
 
-  val featurizationModel = new EstimatorParam(this, "featurizeModel", "featurize model to run")
+  val featurizationModel = new EstimatorParam(this, "featurizationModel", "featurization model to run preprocessing data")
   def getFeaturizationModel: Estimator[_ <: Model[_]] = $(featurizationModel)
   def setFeaturizationModel(value: Estimator[_ <: Model[_]] ) : this.type =  set(featurizationModel, value)
 
@@ -60,10 +59,16 @@ trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol wit
   def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio)
   def setSampleSplitRatio(value: Array[Double]): this.type = set(sampleSplitRatio, value)
 
+  val ciCalcIterations: Param[Int] = new Param[Int](this, "ciCalcIterations", "how many iterations you want to run to get confidence intervals.")
+  def getCICalcIterations: Int = $(ciCalcIterations)
+  def setCICalcIterations(value: Int): this.type = set(ciCalcIterations, value)
+
+  def setParallelism(value: Int): this.type = set(parallelism, value)
+
   setDefault(
-    discrete_treatment -> true,
     treatmentModel -> new LogisticRegression(),
     outcomeModel -> new LogisticRegression(),
-    sampleSplitRatio -> Array(0.5, 0.5)
+    sampleSplitRatio -> Array(0.5, 0.5),
+    parallelism -> 10 // Best practice, a value up to 10 should be sufficient for most clusters.
   )
 }
