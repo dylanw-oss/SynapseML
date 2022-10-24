@@ -315,7 +315,7 @@ object LinearDMLEstimator extends ComplexParamsReadable[LinearDMLEstimator] {
 
 /** Model produced by [[LinearDMLEstimator]]. */
 class LinearDMLModel(val uid: String)
-  extends AutoTrainedModel[LinearDMLModel] with Wrappable with BasicLogging {
+  extends Model[LinearDMLModel] with Wrappable with BasicLogging {
   logClass()
 
   def this() = this(Identifiable.randomUID("LinearDMLModel"))
