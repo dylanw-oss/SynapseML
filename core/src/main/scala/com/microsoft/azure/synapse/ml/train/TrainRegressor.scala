@@ -42,16 +42,8 @@ class TrainRegressor(override val uid: String) extends AutoTrainer[TrainedRegres
     */
   override def fit(dataset: Dataset[_]): TrainedRegressorModel = {
     logFit({
-      val labelColumn = getLabelCol
-      var oneHotEncodeCategoricals = true
-
-      val numFeatures: Int = getModel match {
-        case _: DecisionTreeRegressor | _: GBTRegressor | _: RandomForestRegressor =>
-          oneHotEncodeCategoricals = false
-          FeaturizeUtilities.NumFeaturesTreeOrNNBased
-        case _ =>
-          FeaturizeUtilities.NumFeaturesDefault
-      }
+      val (processedData, featurizedModel) = getFeaturizedDataAndModel(dataset)
+      processedData.cache()
 
       val regressor = getModel match {
         case predictor: Predictor[_, _, _] =>
@@ -64,59 +56,15 @@ class TrainRegressor(override val uid: String) extends AutoTrainer[TrainedRegres
         case _ => throw new Exception("Unsupported learner type " + getModel.getClass.toString)
       }
 
-      val featuresToHashTo =
-        if (getNumFeatures != 0) {
-          getNumFeatures
-        } else {
-          numFeatures
-        }
-
-      // TODO: Handle DateType, TimestampType and DecimalType for label
-      // Convert the label column during train to the correct type and drop missings
-      val convertedLabelDataset = dataset.withColumn(labelColumn,
-        dataset.schema(labelColumn).dataType match {
-          case _: IntegerType |
-               _: BooleanType |
-               _: FloatType |
-               _: ByteType |
-               _: LongType |
-               _: ShortType |
-               _: StringType =>
-            dataset(labelColumn).cast(DoubleType)
-          case _: DoubleType =>
-            dataset(labelColumn)
-          case default => throw new Exception("Unknown type: " + default.typeName +
-            ", for label column: " + labelColumn)
-        }
-      ).na.drop(Seq(labelColumn))
-
-      val featureColumns = if (getFeatureColumnsStr != null && getFeatureColumnsStr.trim.nonEmpty) {
-        getFeatureColumnsStr.split("[,; ]+").map(_.trim).toSeq
-      } else {
-        val nonFeatureColumns = labelColumn +: getExcludedFeatureCols
-        convertedLabelDataset.columns.filter(col => !nonFeatureColumns.contains(col)).toSeq
-      }
-
-      val featurizer = new Featurize()
-        .setOutputCol(getFeaturesCol)
-        .setInputCols(featureColumns.toArray)
-        .setOneHotEncodeCategoricals(oneHotEncodeCategoricals)
-        .setNumFeatures(featuresToHashTo)
-
-      val featurizedModel = featurizer.fit(convertedLabelDataset)
-      val processedData = featurizedModel.transform(convertedLabelDataset)
-
-      processedData.cache()
-
       // Train the learner
       val fitModel = regressor.fit(processedData)
 
       processedData.unpersist()
 
       // Note: The fit shouldn't do anything here
-      val pipelineModel = new Pipeline().setStages(Array(featurizedModel, fitModel)).fit(convertedLabelDataset)
+      val pipelineModel = new Pipeline().setStages(Array(featurizedModel, fitModel)).fit(dataset)
       new TrainedRegressorModel()
-        .setLabelCol(labelColumn)
+        .setLabelCol(getLabelCol)
         .setModel(pipelineModel)
         .setFeaturesCol(getFeaturesCol)
     })
@@ -125,6 +73,61 @@ class TrainRegressor(override val uid: String) extends AutoTrainer[TrainedRegres
   override def copy(extra: ParamMap): Estimator[TrainedRegressorModel] = {
     setModel(getModel.copy(extra))
     defaultCopy(extra)
+  }
+
+  def getFeaturizedDataAndModel(dataset: Dataset[_]): (DataFrame, PipelineModel) = {
+    val labelColumn = getLabelCol
+    var oneHotEncodeCategoricals = true
+
+    val numFeatures: Int = getModel match {
+      case _: DecisionTreeRegressor | _: GBTRegressor | _: RandomForestRegressor =>
+        oneHotEncodeCategoricals = false
+        FeaturizeUtilities.NumFeaturesTreeOrNNBased
+      case _ =>
+        FeaturizeUtilities.NumFeaturesDefault
+    }
+
+    val featuresToHashTo =
+      if (getNumFeatures != 0) {
+        getNumFeatures
+      } else {
+        numFeatures
+      }
+
+    // TODO: Handle DateType, TimestampType and DecimalType for label
+    // Convert the label column during train to the correct type and drop missings
+    val convertedLabelDataset = dataset.withColumn(labelColumn,
+      dataset.schema(labelColumn).dataType match {
+        case _: IntegerType |
+             _: BooleanType |
+             _: FloatType |
+             _: ByteType |
+             _: LongType |
+             _: ShortType |
+             _: StringType =>
+          dataset(labelColumn).cast(DoubleType)
+        case _: DoubleType =>
+          dataset(labelColumn)
+        case default => throw new Exception("Unknown type: " + default.typeName +
+          ", for label column: " + labelColumn)
+      }
+    ).na.drop(Seq(labelColumn))
+
+    val featureColumns = if (getFeatureColumnsStr != null && getFeatureColumnsStr.trim.nonEmpty) {
+      getFeatureColumnsStr.split("[,; ]+").map(_.trim).toSeq
+    } else {
+      val nonFeatureColumns = labelColumn +: getExcludedFeatureCols
+      convertedLabelDataset.columns.filter(col => !nonFeatureColumns.contains(col)).toSeq
+    }
+
+    val featurizer = new Featurize()
+      .setOutputCol(getFeaturesCol)
+      .setInputCols(featureColumns.toArray)
+      .setOneHotEncodeCategoricals(oneHotEncodeCategoricals)
+      .setNumFeatures(featuresToHashTo)
+
+    val featurizedModel = featurizer.fit(convertedLabelDataset)
+    (featurizedModel.transform(convertedLabelDataset), featurizedModel)
   }
 
   @DeveloperApi

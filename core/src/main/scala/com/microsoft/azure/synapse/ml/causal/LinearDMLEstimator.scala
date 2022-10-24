@@ -15,11 +15,11 @@ import org.apache.spark.ml.classification._
 import org.apache.spark.ml.feature.VectorAssembler
 import org.apache.spark.ml.linalg.DenseVector
 import org.apache.spark.ml.param._
-import org.apache.spark.ml.param.shared.HasWeightCol
+import org.apache.spark.ml.param.shared.{HasFeaturesCol, HasLabelCol, HasWeightCol}
 import org.apache.spark.ml.util._
 import org.apache.spark.sql._
 import org.apache.spark.sql.types._
-import org.apache.spark.ml.regression.{GeneralizedLinearRegression, GeneralizedLinearRegressionModel, Regressor}
+import org.apache.spark.ml.regression.{GeneralizedLinearRegression, GeneralizedLinearRegressionModel, RandomForestRegressor, Regressor}
 
 import scala.concurrent.Future
 import scala.util.Success
@@ -94,20 +94,74 @@ class LinearDMLEstimator(override val uid: String)
         }
       }
 
+      getTreatmentModel match {
+        case m: HasLabelCol with HasFeaturesCol =>
+          m.set(m.labelCol, getTreatmentCol)
+          if (isDefined(featurizationModel)) {
+            m.set(m.featuresCol, getFeaturesCol)
+          } else {
+            m.set(m.featuresCol, "treatment_features")
+          }
+        case _ => throw new Exception("The defined treatment model does not support HasLabelCol and HasFeaturesCol.")
+      }
+
+      getOutcomeModel match {
+        case m: HasLabelCol with HasFeaturesCol =>
+          m.set(m.labelCol, getOutcomeCol)
+          if (isDefined(featurizationModel)) {
+            m.set(m.featuresCol, getFeaturesCol)
+          } else {
+            m.set(m.featuresCol, "outcome_features")
+          }
+        case _ => throw new Exception("The defined outcome model does not support HasLabelCol and HasFeaturesCol.")
+      }
+
+      val treatmentPredictionColName = getTreatmentModel match {
+        case classifier: ProbabilisticClassifier[_, _, _] => classifier.getProbabilityCol
+        case regressor: Regressor[_, _, _] => regressor.getPredictionCol
+      }
+
+      val outcomePredictionColName = getOutcomeModel match {
+        case classifier: ProbabilisticClassifier[_, _, _] => classifier.getProbabilityCol
+        case regressor: Regressor[_, _, _] => regressor.getPredictionCol
+      }
+
       val preprocessedDF = if (get(featurizationModel).isDefined) {
         getFeaturizationModel.fit(dataset).transform(dataset)
-      } else dataset
+      } else {
+        val datasetWithTreatmentFeatures = getTreatmentModel match {
+          case classifier: ProbabilisticClassifier[_, _, _] =>
+            val trainer = new TrainClassifier().setFeaturesCol("treatment_features").setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol))
+            val (processedDF, _, _, _) = trainer.getFeaturizedDataAndModel(dataset)
+            processedDF
+          case regressor: Regressor[_, _, _] =>
+            val trainer = new TrainRegressor().setFeaturesCol("treatment_features").setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol))
+            val (processedDF, _) = trainer.getFeaturizedDataAndModel(dataset)
+            processedDF
+        }
+        val datasetWithTreatmentAndOutcomeFeatures = getOutcomeModel match {
+          case classifier: ProbabilisticClassifier[_, _, _] =>
+            val trainer = new TrainClassifier().setFeaturesCol("outcome_features").setModel(getOutcomeModel).setLabelCol(getOutcomeCol).setExcludedFeatureCols(Array(getTreatmentCol, "treatment_features"))
+            val (processedDF, _, _, _) = trainer.getFeaturizedDataAndModel(datasetWithTreatmentFeatures)
+            processedDF
+          case regressor: Regressor[_, _, _] =>
+            val trainer = new TrainRegressor().setFeaturesCol("outcome_features").setModel(getOutcomeModel).setLabelCol(getOutcomeCol).setExcludedFeatureCols(Array(getTreatmentCol, "treatment_features"))
+            val (processedDF, _) = trainer.getFeaturizedDataAndModel(datasetWithTreatmentFeatures)
+            processedDF
+        }
+        datasetWithTreatmentAndOutcomeFeatures
+      }
 
       preprocessedDF.cache()
 
-      val ate = trainInternal(preprocessedDF)
+      val ate = trainInternal(preprocessedDF, treatmentPredictionColName, outcomePredictionColName)
 
       val dmlModel = new LinearDMLModel().setATE(ate)
 
       if (get(ciCalcIterations).isDefined) {
         // Confidence intervals:
-        // sampling with replacement to redraw data and get TE value
-        // Run it for multiple times in parallel, get a TE list,
+        // sampling with replacement to redraw data and get ATE value
+        // Run it for multiple times in parallel, get a number of ATE values,
         // Use 2.5% low end, 97.5% high as CI value
 
         // Create execution context based on $(parallelism)
@@ -116,31 +170,31 @@ class LinearDMLEstimator(override val uid: String)
 
         val ateFutures = Range(0, getCICalcIterations).toArray.map { index =>
           Future[Double] {
-            log.info(s"Executing TE estimator on iteration: $index")
-            println(s"Executing TE estimator on iteration: $index")
+            log.info(s"Executing ATE calculation on iteration: $index")
+            println(s"Executing ATE calculation on iteration: $index")
             // sample data with replacement
-            val trainingDataset = preprocessedDF.sample(withReplacement = true, fraction = 1).cache()
+            val redrewDF = preprocessedDF.sample(withReplacement = true, fraction = 1).cache()
             val ate: Option[Double] =
               try {
                 val totalTime = new StopWatch
                 val te = totalTime.measure {
-                  trainInternal(trainingDataset)
+                  trainInternal(redrewDF, treatmentPredictionColName, outcomePredictionColName)
                 }
-                println(s"Completed TE estimator on iteration $index and got TE value: $te, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
+                println(s"Completed ATE calculation on iteration $index and got ATE value: $te, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
                 Some(te)
               } catch {
                 case ex: Throwable =>
-                  println(s"TE estimator got exception on iteration $index with a redrew sample data. Exception ignored. Exception details: $ex")
-                  log.info(s"TE estimator got exception on iteration $index with a redrew sample data. Exception ignored. Exception details: $ex")
+                  println(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception ignored.")
+                  log.info(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
                   None
               }
-            trainingDataset.unpersist()
+            redrewDF.unpersist()
             ate.getOrElse(0.0)
           }(executionContext)
         }
 
         val ates = awaitFutures(ateFutures).filter(_ != 0.0).sorted
-        println(s"Completed all TE estimators fitting tasks and got ${ates.length} TE results.")
+        println(s"Completed ATE calculation for $getCICalcIterations iterations and got ${ates.length} ATE values.")
 
         if (ates.length > 1) {
           val ci = Array(percentile[Double](ates, 2.5), percentile[Double](ates, 97.5))
@@ -159,13 +213,14 @@ class LinearDMLEstimator(override val uid: String)
   }
 
 
-  private def trainInternal(dataset: Dataset[_]): Double = {
+  private def trainInternal(dataset: Dataset[_], treatmentPredictionColName: String, outcomePredictionColName: String): Double = {
     // treatment effect:
     // 1. split sample, e.g. 50/50
     // 2. use first sample data to fit treatment model and outcome model,
-    // 3. use two models on the second sample data to get residuals, apply regressor fit to get treatment effect T1 = lrm1.coefficients(0)
-    // 4. cross fitting to get another treatment effect, T2 = lrm2.coefficients(0)
-    // 5. final treatment effects = (T1 + T2) / 2
+    // 3. use two models on the second sample data to get residuals,
+    // 4. cross fitting to get another residuals,
+    // 5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
+    // 5. average treatment effects = (T1 + T2) / 2
 
     // Step 1 - split sample
     val splits = dataset.randomSplit(getSampleSplitRatio)
@@ -173,63 +228,50 @@ class LinearDMLEstimator(override val uid: String)
     val test = splits(1).cache()
 
     // Step 2 - use first sample data to fit treatment model and outcome model
-    val (treatmentEstimator, treatmentPredictionColName) = getTreatmentModel match {
-      case classifier: ProbabilisticClassifier[_, _, _] => (
-        new TrainClassifier().setFeaturesCol("_features_").setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol)),
-        classifier.getProbabilityCol
-      )
-      case regressor: Regressor[_, _, _] => (
-        new TrainRegressor().setFeaturesCol("_features_").setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol)),
-        regressor.getPredictionCol
-      )
-    }
+    val treatmentPredictor = getTreatmentModel
+    val outcomePredictor = getOutcomeModel
 
-    val (outcomeEstimator, outcomePredictionColName) = getOutcomeModel match {
-      case classifier: ProbabilisticClassifier[_, _, _] => (
-        new TrainClassifier().setFeaturesCol("_features_").setModel(getOutcomeModel).setLabelCol(getOutcomeCol).setExcludedFeatureCols(Array(getTreatmentCol)),
-        classifier.getProbabilityCol
-      )
-      case regressor: Regressor[_, _, _] => (
-        new TrainRegressor().setFeaturesCol("_features_").setModel(getOutcomeModel).setLabelCol(getOutcomeCol).setExcludedFeatureCols(Array(getTreatmentCol)),
-        regressor.getPredictionCol
-      )
-    }
-
-    val treatmentModel_iteration1 = treatmentEstimator.fit(train)
-    val outcomeModel_iteration1 = outcomeEstimator.fit(train)
+    val treatmentModelV1 = treatmentPredictor.fit(train)
+    val outcomeModelV1 = outcomePredictor.fit(train)
 
     // Step 3 - use second sample data to get predictions and compute residuals
-    val treatmentDF_iteration1 = treatmentModel_iteration1.transform(test)
-    val treatmentResidualDF_iteration1 =
+    val treatmentPredictedDFV1 = treatmentModelV1.transform(test)
+    val treatmentResidualDFV1 =
       new ComputeResidualTransformer()
         .setObservedCol(getTreatmentCol)
         .setPredictedCol(treatmentPredictionColName)
-        .setOutputCol(SchemaConstants.TreatmentResidualColumn).transform(treatmentDF_iteration1)
+        .setOutputCol(SchemaConstants.TreatmentResidualColumn)
+        .transform(treatmentPredictedDFV1)
 
-    val outcomeDF_iteration1 = outcomeModel_iteration1.transform(treatmentResidualDF_iteration1)
-    val residualDF_iteration1 = new ComputeResidualTransformer()
-      .setObservedCol(getOutcomeCol)
-      .setPredictedCol(outcomePredictionColName)
-      .setOutputCol(SchemaConstants.OutcomeResidualColumn).transform(outcomeDF_iteration1)
+    val outcomePredictedDFV1 = outcomeModelV1.transform(treatmentResidualDFV1)
+    val residualsDFV1 =
+      new ComputeResidualTransformer()
+        .setObservedCol(getOutcomeCol)
+        .setPredictedCol(outcomePredictionColName)
+        .setOutputCol(SchemaConstants.OutcomeResidualColumn)
+        .transform(outcomePredictedDFV1)
 
-    val treatmentModel_iteration2 = treatmentEstimator.fit(test)
-    val outcomeModel_iteration2 = outcomeEstimator.fit(test)
+    // Step 4 - cross fitting to get another residuals
+    val treatmentModelV2 = treatmentPredictor.fit(test)
+    val outcomeModelV2 = outcomePredictor.fit(test)
 
-    // Step 4 - cross fitting to get another treatment effect, T2 = lrm2.coefficients(0)
-    val treatmentDF_iteration2 = treatmentModel_iteration2.transform(train)
-    val treatmentResidualDF_iteration2 =
+    val treatmentPredictedDFV2 = treatmentModelV2.transform(train)
+    val treatmentResidualDFV2 =
       new ComputeResidualTransformer()
         .setObservedCol(getTreatmentCol)
         .setPredictedCol(treatmentPredictionColName)
-        .setOutputCol(SchemaConstants.TreatmentResidualColumn).transform(treatmentDF_iteration2)
+        .setOutputCol(SchemaConstants.TreatmentResidualColumn)
+        .transform(treatmentPredictedDFV2)
 
-    val outcomeDF_iteration2 = outcomeModel_iteration2.transform(treatmentResidualDF_iteration2)
-    val residualDF_iteration2 = new ComputeResidualTransformer()
-      .setObservedCol(getOutcomeCol)
-      .setPredictedCol(outcomePredictionColName)
-      .setOutputCol(SchemaConstants.OutcomeResidualColumn).transform(outcomeDF_iteration2)
+    val outcomePredictedDFV2 = outcomeModelV2.transform(treatmentResidualDFV2)
+    val residualsDFV2 =
+      new ComputeResidualTransformer()
+        .setObservedCol(getOutcomeCol)
+        .setPredictedCol(outcomePredictionColName)
+        .setOutputCol(SchemaConstants.OutcomeResidualColumn)
+        .transform(outcomePredictedDFV2)
 
-    // Step 5 - final treatment effects = (T1 + T2) / 2
+    // 5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
     val va: Array[PipelineStage] = Array(
       new VectorAssembler()
         .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
@@ -245,13 +287,14 @@ class LinearDMLEstimator(override val uid: String)
       .setLink("identity")
       .setFitIntercept(false)
 
-    val pipeline_finalModel = new Pipeline().setStages(va :+ regressor).fit(residualDF_iteration1)
-    val lrmT1 = pipeline_finalModel.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
-    val pipeline_finalModel2 = new Pipeline().setStages(va :+ regressor).fit(residualDF_iteration2)
-    val lrmT2 = pipeline_finalModel2.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
+    val lrmPipelineModelV1 = new Pipeline().setStages(va :+ regressor).fit(residualsDFV1)
+    val lrmV1 = lrmPipelineModelV1.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
+    val lrmPipelineModelV2 = new Pipeline().setStages(va :+ regressor).fit(residualsDFV2)
+    val lrmV2 = lrmPipelineModelV2.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
 
-    val ate = (lrmT1.coefficients.asInstanceOf[DenseVector].values(0)
-      + lrmT2.coefficients.asInstanceOf[DenseVector].values(0)) / 2.0
+    // Step 6 - final treatment effects = (T1 + T2) / 2
+    val ate = (lrmV1.coefficients.asInstanceOf[DenseVector].values(0)
+      + lrmV2.coefficients.asInstanceOf[DenseVector].values(0)) / 2.0
 
     ate
   }
