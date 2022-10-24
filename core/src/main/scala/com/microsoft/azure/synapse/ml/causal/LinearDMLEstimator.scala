@@ -64,17 +64,13 @@ import scala.util.Success
  */
 //noinspection ScalaStyle
 class LinearDMLEstimator(override val uid: String)
-  extends AutoTrainer[LinearDMLModel]
+  extends Estimator[LinearDMLModel]
     with LinearDMLParams
     with BasicLogging {
 
   logClass()
 
   def this() = this(Identifiable.randomUID("LinearDMLEstimator"))
-
-  override def modelDoc: String = "LinearDML to run"
-
-  setDefault(featuresCol, this.uid + "_features")
 
   /** Fits the LinearDML model.
    *

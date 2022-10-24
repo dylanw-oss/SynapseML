@@ -1,6 +1,6 @@
 package com.microsoft.azure.synapse.ml.causal
 
-import com.microsoft.azure.synapse.ml.core.contracts.HasWeightCol
+import com.microsoft.azure.synapse.ml.core.contracts.{HasFeaturesCol, HasWeightCol}
 import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClassifier}
 import org.apache.spark.ml.{Estimator, Model}
 import com.microsoft.azure.synapse.ml.param.EstimatorParam
@@ -20,7 +20,7 @@ trait HasOutcomeCol extends Params {
   def setOutcomeCol(value: String): this.type = set(outcome, value)
 }
 
-trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol with HasWeightCol with HasParallelismInjected {
+trait LinearDMLParams extends Params with HasTreatmentCol with HasOutcomeCol with HasFeaturesCol with HasWeightCol with HasParallelismInjected {
 
   val treatmentModel = new EstimatorParam(this, "treatmentModel", "treatment model to run")
   def getTreatmentModel: Estimator[_ <: Model[_]] = $(treatmentModel)
