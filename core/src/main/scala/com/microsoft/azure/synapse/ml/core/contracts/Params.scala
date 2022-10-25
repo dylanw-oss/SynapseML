@@ -7,9 +7,9 @@ import org.apache.spark.ml.param._
 
 trait HasInputCol extends Params {
   /** The name of the input column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val inputCol = new Param[String](this, "inputCol", "The name of the input column")
 
   /** @group setParam */
@@ -21,9 +21,9 @@ trait HasInputCol extends Params {
 
 trait HasOutputCol extends Params {
   /** The name of the output column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val outputCol = new Param[String](this, "outputCol", "The name of the output column")
 
   /** @group setParam */
@@ -35,9 +35,9 @@ trait HasOutputCol extends Params {
 
 trait HasInputCols extends Params {
   /** The names of the inputColumns
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val inputCols = new StringArrayParam(this, "inputCols", "The names of the input columns")
 
   /** @group setParam */
@@ -49,9 +49,9 @@ trait HasInputCols extends Params {
 
 trait HasOutputCols extends Params {
   /** The names of the output columns
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val outputCols = new StringArrayParam(this, "outputCols", "The names of the output columns")
 
   /** @group setParam */
@@ -63,9 +63,9 @@ trait HasOutputCols extends Params {
 
 trait HasLabelCol extends Params {
   /** The name of the label column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val labelCol = new Param[String](this, "labelCol", "The name of the label column")
 
   /** @group setParam */
@@ -77,9 +77,9 @@ trait HasLabelCol extends Params {
 
 trait HasFeaturesCol extends Params {
   /** The name of the features column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val featuresCol = new Param[String](this, "featuresCol", "The name of the features column")
 
   /** @group setParam */
@@ -91,9 +91,9 @@ trait HasFeaturesCol extends Params {
 
 trait HasWeightCol extends Params {
   /** The name of the weight column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val weightCol = new Param[String](this, "weightCol", "The name of the weight column")
 
   /** @group setParam */
@@ -105,9 +105,9 @@ trait HasWeightCol extends Params {
 
 trait HasScoredLabelsCol extends Params {
   /** The name of the scored labels column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val scoredLabelsCol =
     new Param[String](this, "scoredLabelsCol",
       "Scored labels column name, only required if using SparkML estimators")
@@ -121,9 +121,9 @@ trait HasScoredLabelsCol extends Params {
 
 trait HasScoresCol extends Params {
   /** The name of the scores column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val scoresCol =
     new Param[String](this, "scoresCol",
       "Scores or raw prediction column name, only required if using SparkML estimators")
@@ -137,9 +137,9 @@ trait HasScoresCol extends Params {
 
 trait HasScoredProbabilitiesCol extends Params {
   /** The name of the scored probabilities column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val scoredProbabilitiesCol =
     new Param[String](this, "scoredProbabilitiesCol",
       "Scored probabilities, usually calibrated from raw scores, only required if using SparkML estimators")
@@ -164,9 +164,9 @@ trait HasEvaluationMetric extends Params {
 
 trait HasValidationIndicatorCol extends Params {
   /** The name of the validation indicator column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val validationIndicatorCol: Param[String] =
     new Param[String](this, "validationIndicatorCol", "Indicates whether the row is for training or validation")
 
@@ -179,9 +179,9 @@ trait HasValidationIndicatorCol extends Params {
 
 trait HasInitScoreCol extends Params {
   /** The name of the initial score column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val initScoreCol = new Param[String](this, "initScoreCol",
     "The name of the initial score column, used for continued training")
 
@@ -194,9 +194,9 @@ trait HasInitScoreCol extends Params {
 
 trait HasGroupCol extends Params {
   /** The name of the group column
-    *
-    * @group param
-    */
+   *
+   * @group param
+   */
   val groupCol = new Param[String](this, "groupCol", "The name of the group column")
 
   /** @group setParam */
@@ -204,4 +204,19 @@ trait HasGroupCol extends Params {
 
   /** @group getParam */
   def getGroupCol: String = $(groupCol)
+}
+
+trait HasExcludedFeatureCols extends Params {
+
+  /** The names of the hasExcludedCols
+   *
+   * @group param
+   */
+  val excludedFeatureCols = new StringArrayParam(this, "excludedFeatureCols", "The names of the columns to be excluded from featuring")
+
+  /** @group setParam */
+  def setExcludedFeatureCols(value: Array[String]): this.type = set(excludedFeatureCols, value)
+
+  /** @group getParam */
+  def getExcludedFeatureCols: Array[String] = $(excludedFeatureCols)
 }

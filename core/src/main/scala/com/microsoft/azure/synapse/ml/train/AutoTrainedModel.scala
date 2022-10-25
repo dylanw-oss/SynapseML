@@ -9,11 +9,11 @@ import org.apache.spark.ml.param.ParamMap
 import org.apache.spark.ml.{ComplexParamsWritable, Model, PipelineModel, Transformer}
 
 /** Defines common inheritance and functions across auto trained models.
-  */
+ */
 abstract class AutoTrainedModel[TrainedModel <: Model[TrainedModel]]
   extends Model[TrainedModel] with ComplexParamsWritable with HasLabelCol with HasFeaturesCol{
 
-  private def validate(t: Transformer): Boolean = {
+  def validate(t: Transformer): Boolean = {
     t match {
       case _: PipelineModel => true
       case _ => false
@@ -27,14 +27,14 @@ abstract class AutoTrainedModel[TrainedModel <: Model[TrainedModel]]
   def setModel(v: PipelineModel): this.type = set(model, v)
 
   /** Retrieve the param map from the underlying model.
-    *
-    * @return The param map from the underlying model.
-    */
+   *
+   * @return The param map from the underlying model.
+   */
   def getParamMap: ParamMap = getModel.stages.last.extractParamMap()
 
   /** Retrieve the underlying model.
-    *
-    * @return The underlying model.
-    */
+   *
+   * @return The underlying model.
+   */
   def getLastStage: Transformer = getModel.stages.last
 }
