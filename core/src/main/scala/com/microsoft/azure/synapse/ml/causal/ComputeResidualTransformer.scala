@@ -32,14 +32,14 @@ protected class ComputeResidualTransformer(override val uid: String) extends Tra
   def setOutputCol(value: String): this.type = set(param = outputCol, value = value)
   final def getOutputCol: String = getOrDefault(outputCol)
 
-  val `class` =
+  val probabilityIndex =
     new IntParam(
       this,
-      "class",
+      "probabilityIndex",
       "probability index value for residual compute, by default it is 1, the second value of probability vector",
       ParamValidators.gtEq(0))
-  def set$class(value: Int): this.type = set(param = `class`, value = value)
-  final def get$class: Int = $(`class`)
+  def setProbabilityIndex(value: Int): this.type = set(param = probabilityIndex, value = value)
+  final def getProbabilityIndex: Int = getOrDefault(probabilityIndex)
 
   override def copy(extra: ParamMap): ComputeResidualTransformer = defaultCopy(extra)
 
@@ -52,7 +52,7 @@ protected class ComputeResidualTransformer(override val uid: String) extends Tra
       )
     )
 
-  setDefault(outputCol -> "residual", observedCol -> "y", predictedCol -> "yhat", `class` -> 1)
+  setDefault(outputCol -> "residual", observedCol -> "y", predictedCol -> "yhat", probabilityIndex -> 1)
 
   override def transform(dataset: Dataset[_]): DataFrame = {
     logTransform[DataFrame]({
@@ -62,9 +62,9 @@ protected class ComputeResidualTransformer(override val uid: String) extends Tra
 
       transformSchema(schema = dataset.schema, logging = true)
 
-      // TO-DO: Validate $(`class`) >= probability size
+      // TO-DO: Validate $(probabilityIndex) >= probability size
       val extract_prob_udf = udf { (label: Double, prob: Vector) =>
-        label - prob($(`class`))
+        label - prob($(probabilityIndex))
       }
 
       val columnsToDrop = Seq(SchemaConstants.SparkRawPredictionColumn, SchemaConstants.SparkProbabilityColumn, SchemaConstants.SparkPredictionColumn)
