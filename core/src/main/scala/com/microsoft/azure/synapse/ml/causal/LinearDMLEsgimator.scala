@@ -201,22 +201,38 @@ class LinearDMLEstimator(override val uid: String)
     // Step 2 - use first sample data to fit treatment model and outcome model
     val (treatmentEstimator, treatmentPredictionColName) = getTreatmentModel match {
       case classifier: ProbabilisticClassifier[_, _, _] => (
-        new TrainClassifier().setFeaturesCol("treatment_features").setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol)),
+        new TrainClassifier()
+          .setFeaturesCol("treatment_features")
+          .setModel(getTreatmentModel)
+          .setLabelCol(getTreatmentCol)
+          .setExcludedFeatureCols(Array(getOutcomeCol)),
         classifier.getProbabilityCol
       )
       case regressor: Regressor[_, _, _] => (
-        new TrainRegressor().setFeaturesCol("treatment_features").setModel(getTreatmentModel).setLabelCol(getTreatmentCol).setExcludedFeatureCols(Array(getOutcomeCol)),
+        new TrainRegressor()
+          .setFeaturesCol("treatment_features")
+          .setModel(getTreatmentModel)
+          .setLabelCol(getTreatmentCol)
+          .setExcludedFeatureCols(Array(getOutcomeCol)),
         regressor.getPredictionCol
       )
     }
 
     val (outcomeEstimator, outcomePredictionColName) = getOutcomeModel match {
       case classifier: ProbabilisticClassifier[_, _, _] => (
-        new TrainClassifier().setFeaturesCol("outcome_features").setModel(getOutcomeModel).setLabelCol(getOutcomeCol).setExcludedFeatureCols(Array(getTreatmentCol)),
+        new TrainClassifier()
+          .setFeaturesCol("outcome_features")
+          .setModel(getOutcomeModel)
+          .setLabelCol(getOutcomeCol)
+          .setExcludedFeatureCols(Array(getTreatmentCol)),
         classifier.getProbabilityCol
       )
       case regressor: Regressor[_, _, _] => (
-        new TrainRegressor().setFeaturesCol("outcome_features").setModel(getOutcomeModel).setLabelCol(getOutcomeCol).setExcludedFeatureCols(Array(getTreatmentCol)),
+        new TrainRegressor()
+          .setFeaturesCol("outcome_features")
+          .setModel(getOutcomeModel)
+          .setLabelCol(getOutcomeCol)
+          .setExcludedFeatureCols(Array(getTreatmentCol)),
         regressor.getPredictionCol
       )
     }
