@@ -205,3 +205,18 @@ trait HasGroupCol extends Params {
   /** @group getParam */
   def getGroupCol: String = $(groupCol)
 }
+
+trait HasExcludedFeatureCols extends Params {
+
+  /** The names of the hasExcludedCols
+    *
+    * @group param
+    */
+  val excludedFeatureCols = new StringArrayParam(this, "excludedFeatureCols", "The names of the columns to be excluded from featuring")
+
+  /** @group setParam */
+  def setExcludedFeatureCols(value: Array[String]): this.type = set(excludedFeatureCols, value)
+
+  /** @group getParam */
+  def getExcludedFeatureCols: Array[String] = $(excludedFeatureCols)
+}
