@@ -3,9 +3,9 @@ package com.microsoft.azure.synapse.ml.causal
 import com.microsoft.azure.synapse.ml.core.contracts.{HasFeaturesCol, HasWeightCol}
 import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClassifier}
 import org.apache.spark.ml.{Estimator, Model}
-import com.microsoft.azure.synapse.ml.param.EstimatorParam
+import com.microsoft.azure.synapse.ml.param.{EstimatorParam, UntypedArrayParam}
 import org.apache.spark.ml.ParamInjections.HasParallelismInjected
-import org.apache.spark.ml.param.{Param, Params}
+import org.apache.spark.ml.param.{IntParam, Param, Params}
 import org.apache.spark.ml.regression.Regressor
 
 trait HasTreatmentCol extends Params {
@@ -58,12 +58,12 @@ trait LinearDMLParams extends Params
   def getFeaturizationModel: Estimator[_ <: Model[_]] = $(featurizationModel)
   def setFeaturizationModel(value: Estimator[_ <: Model[_]]): this.type =  set(featurizationModel, value)
 
-  val sampleSplitRatio: Param[Array[Double]] = new Param[Array[Double]](this,
-    "SampleSplitRatio", "SampleSplitRatio", v => v.length == 2 && v.forall(_ > 0))
-  def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio)
-  def setSampleSplitRatio(value: Array[Double]): this.type = set(sampleSplitRatio, value)
+  val sampleSplitRatio = new UntypedArrayParam(this,
+    "SampleSplitRatio", "SampleSplitRatio")
+  def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio).map(_.toString.toDouble)
+  def setSampleSplitRatio(value: Array[Any]): this.type = set(sampleSplitRatio, value)
 
-  val ciCalcIterations: Param[Int] = new Param[Int](this,
+  val ciCalcIterations: IntParam = new IntParam(this,
     "ciCalcIterations", "how many iterations you want to run to get confidence intervals.")
   def getCICalcIterations: Int = $(ciCalcIterations)
   def setCICalcIterations(value: Int): this.type = set(ciCalcIterations, value)

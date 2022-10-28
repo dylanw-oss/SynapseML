@@ -11,7 +11,7 @@ import org.apache.spark.sql.functions.{col, udf}
 import org.apache.spark.sql.{DataFrame, Dataset}
 import org.apache.spark.sql.types._
 
-protected class ComputeResidualTransformer(override val uid: String) extends Transformer
+class ComputeResidualTransformer(override val uid: String) extends Transformer
   with DefaultParamsWritable
   with Wrappable
   with BasicLogging {

@@ -64,8 +64,7 @@ import scala.concurrent.Future
 //noinspection ScalaStyle
 class LinearDMLEstimator(override val uid: String)
   extends Estimator[LinearDMLModel]
-    with LinearDMLParams
-    with BasicLogging {
+    with LinearDMLParams with BasicLogging with Wrappable {
 
   logClass()
 
