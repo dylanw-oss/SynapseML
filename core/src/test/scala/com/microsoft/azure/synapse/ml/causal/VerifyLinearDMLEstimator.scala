@@ -58,7 +58,7 @@ class VerifyLinearDMLEstimator extends TestBase {
       .setTreatmentCol(mockLabelColumn)
       .setOutcomeModel(new RandomForestRegressor())
       .setOutcomeCol("col2")
-      .setCICalcIterations(30)
+      .setCiCalcIterations(30)
 
     var ldmlModel = ldml.fit(mockDataset)
     assert(ldmlModel.getCi.length == 2)

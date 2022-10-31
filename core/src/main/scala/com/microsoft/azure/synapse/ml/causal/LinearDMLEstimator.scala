@@ -126,7 +126,7 @@ class LinearDMLEstimator(override val uid: String)
         log.info(s"Parallelism: $getParallelism")
         val executionContext = getExecutionContextProxy
 
-        val ateFutures = Range(0, getCICalcIterations).toArray.map { index =>
+        val ateFutures = Range(0, getCiCalcIterations).toArray.map { index =>
           Future[Double] {
             log.info(s"Executing ATE calculation on iteration: $index")
             println(s"Executing ATE calculation on iteration: $index")
@@ -152,7 +152,7 @@ class LinearDMLEstimator(override val uid: String)
         }
 
         val ates = awaitFutures(ateFutures).filter(_ != 0.0).sorted
-        println(s"Completed ATE calculation for $getCICalcIterations iterations and got ${ates.length} ATE values.")
+        println(s"Completed ATE calculation for $getCiCalcIterations iterations and got ${ates.length} ATE values.")
 
         if (ates.length > 1) {
           val ci = Array(percentile[Double](ates, 2.5), percentile[Double](ates, 97.5))

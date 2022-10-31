@@ -65,8 +65,8 @@ trait LinearDMLParams extends Params
 
   val ciCalcIterations: IntParam = new IntParam(this,
     "ciCalcIterations", "how many iterations you want to run to get confidence intervals.")
-  def getCICalcIterations: Int = $(ciCalcIterations)
-  def setCICalcIterations(value: Int): this.type = set(ciCalcIterations, value)
+  def getCiCalcIterations: Int = $(ciCalcIterations)
+  def setCiCalcIterations(value: Int): this.type = set(ciCalcIterations, value)
 
   def setParallelism(value: Int): this.type = set(parallelism, value)
 

@@ -44,11 +44,11 @@ dml = (LinearDMLEstimator()
       .setTreatmentModel(LogisticRegression())
       .setOutcomeCol("Outcome")
       .setOutcomeModel(LogisticRegression())
-      .setCICalcIterations(100))
+      .setCiCalcIterations(100))
 
 dmlModel = dml.fit(df)
-dmlModel.getATE()
-dmlMOdel.getCI()
+dmlModel.getAte()
+dmlMOdel.getCi()
 ```
 
 </TabItem>
@@ -59,30 +59,30 @@ import com.microsoft.azure.synapse.ml.causal._
 import org.apache.spark.ml.classification.LogisticRegression
 
 val df = (Seq(
-      (0, 1, 0.50, 0.60, 0),
-      (1, 0, 0.40, 0.50, 1),
-      (0, 1, 0.78, 0.99, 2),
-      (1, 0, 0.12, 0.34, 3),
-      (0, 1, 0.50, 0.60, 0),
-      (1, 0, 0.40, 0.50, 1),
-      (0, 1, 0.78, 0.99, 2),
-      (1, 0, 0.12, 0.34, 3),
-      (0, 0, 0.50, 0.60, 0),
-      (1, 1, 0.40, 0.50, 1),
-      (0, 1, 0.78, 0.99, 2),
-      (1, 0, 0.12, 0.34, 3))
-      .toDF("Treatment", "Outcome", "col2", "col3", "col4"))
+  (0, 1, 0.50, 0.60, 0),
+  (1, 0, 0.40, 0.50, 1),
+  (0, 1, 0.78, 0.99, 2),
+  (1, 0, 0.12, 0.34, 3),
+  (0, 1, 0.50, 0.60, 0),
+  (1, 0, 0.40, 0.50, 1),
+  (0, 1, 0.78, 0.99, 2),
+  (1, 0, 0.12, 0.34, 3),
+  (0, 0, 0.50, 0.60, 0),
+  (1, 1, 0.40, 0.50, 1),
+  (0, 1, 0.78, 0.99, 2),
+  (1, 0, 0.12, 0.34, 3))
+  .toDF("Treatment", "Outcome", "col2", "col3", "col4"))
 
 val dml = (new LinearDMLEstimator()
-      .setTreatmentCol("Treatment")
-      .setTreatmentModel(new LogisticRegression())
-      .setOutcomeCol("Outcome")
-      .setOutcomeModel(new LogisticRegression())
-      .setCICalcIterations(100))
+  .setTreatmentCol("Treatment")
+  .setTreatmentModel(new LogisticRegression())
+  .setOutcomeCol("Outcome")
+  .setOutcomeModel(new LogisticRegression())
+  .setCiCalcIterations(100))
 
 val dmlModel = dml.fit(df)
-dmlModel.getATE
-dmlModel.getCI
+dmlModel.getAte
+dmlModel.getCi
 ```
 
 </TabItem>
