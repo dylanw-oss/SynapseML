@@ -37,7 +37,7 @@ class VerifyLinearDMLEstimator extends TestBase {
       .setOutcomeCol("col2")
 
     var ldmlModel = ldml.fit(mockDataset)
-    assert(ldmlModel.getATE != 0.0)
+    assert(ldmlModel.getAte != 0.0)
   }
 
   test("Get treatment effects with weight column") {
@@ -49,7 +49,7 @@ class VerifyLinearDMLEstimator extends TestBase {
       .setWeightCol("col3")
 
     var ldmlModel = ldml.fit(mockDataset)
-    assert(ldmlModel.getATE != 0.0)
+    assert(ldmlModel.getAte != 0.0)
   }
 
   test("Get treatment effects and confidence intervals") {
@@ -61,6 +61,6 @@ class VerifyLinearDMLEstimator extends TestBase {
       .setCICalcIterations(30)
 
     var ldmlModel = ldml.fit(mockDataset)
-    assert(ldmlModel.getCI.length == 2)
+    assert(ldmlModel.getCi.length == 2)
   }
 }

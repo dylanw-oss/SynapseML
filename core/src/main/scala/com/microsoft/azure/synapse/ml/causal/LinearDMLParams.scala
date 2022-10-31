@@ -9,15 +9,15 @@ import org.apache.spark.ml.param.{IntParam, Param, Params}
 import org.apache.spark.ml.regression.Regressor
 
 trait HasTreatmentCol extends Params {
-  val treatment = new Param[String](this, "treatment", "treatment column")
-  def getTreatmentCol: String = $(treatment)
-  def setTreatmentCol(value: String): this.type = set(treatment, value)
+  val treatmentCol = new Param[String](this, "treatmentCol", "treatment column")
+  def getTreatmentCol: String = $(treatmentCol)
+  def setTreatmentCol(value: String): this.type = set(treatmentCol, value)
 }
 
 trait HasOutcomeCol extends Params {
-  val outcome: Param[String] = new Param[String](this, "outcome", "outcome column")
-  def getOutcomeCol: String = $(outcome)
-  def setOutcomeCol(value: String): this.type = set(outcome, value)
+  val outcomeCol: Param[String] = new Param[String](this, "outcomeCol", "outcome column")
+  def getOutcomeCol: String = $(outcomeCol)
+  def setOutcomeCol(value: String): this.type = set(outcomeCol, value)
 }
 
 trait LinearDMLParams extends Params

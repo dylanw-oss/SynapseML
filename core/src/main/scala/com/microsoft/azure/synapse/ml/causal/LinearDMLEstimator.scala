@@ -114,7 +114,7 @@ class LinearDMLEstimator(override val uid: String)
 
       val ate = trainInternal(dataset)
 
-      val dmlModel = new LinearDMLModel().setATE(ate)
+      val dmlModel = new LinearDMLModel().setAte(ate)
 
       if (get(ciCalcIterations).isDefined) {
         // Confidence intervals:
@@ -156,7 +156,7 @@ class LinearDMLEstimator(override val uid: String)
 
         if (ates.length > 1) {
           val ci = Array(percentile[Double](ates, 2.5), percentile[Double](ates, 97.5))
-          dmlModel.setCI(ci)
+          dmlModel.setCi(ci)
         }
       }
 
@@ -317,12 +317,12 @@ class LinearDMLModel(val uid: String)
   def this() = this(Identifiable.randomUID("LinearDMLModel"))
 
   val ate = new Param[Double](this, "ate", "average treatment effect")
-  def getATE: Double = $(ate)
-  def setATE(v: Double): this.type = set(ate, v)
+  def getAte: Double = $(ate)
+  def setAte(v: Double): this.type = set(ate, v)
 
   var ci = new Param[Array[Double]](this, "ci", "treatment effect's confidence interval")
-  def getCI: Array[Double] = $(ci)
-  def setCI(v: Array[Double]): this.type = set(ci, v)
+  def getCi: Array[Double] = $(ci)
+  def setCi(v: Array[Double]): this.type = set(ci, v)
 
   override def copy(extra: ParamMap): LinearDMLModel = defaultCopy(extra)
 
