@@ -112,51 +112,50 @@ class LinearDMLEstimator(override val uid: String)
 
       val dmlModel = new LinearDMLModel()
 
-      if (get(maxIter).isDefined) {
-        // Confidence intervals:
-        // sampling with replacement to redraw data and get ATE value
-        // Run it for multiple times in parallel, get a number of ATE values,
-        // Use 2.5% low end, 97.5% high as CI value
 
-        // Create execution context based on $(parallelism)
-        log.info(s"Parallelism: $getParallelism")
-        val executionContext = getExecutionContextProxy
+      // Confidence intervals:
+      // sampling with replacement to redraw data and get ATE value
+      // Run it for multiple times in parallel, get a number of ATE values,
+      // Use 2.5% low end, 97.5% high as CI value
 
-        val teFutures = Range(0, getMaxIter).toArray.map { index =>
-          Future[Double] {
-            log.info(s"Executing ATE calculation on iteration: $index")
-            println(s"Executing ATE calculation on iteration: $index")
-            // sample data with replacement
-            val redrewDF =  if (getMaxIter == 1) dataset else dataset.sample(withReplacement = true, fraction = 1)
-            redrewDF.cache()
-            val te: Option[Double] =
-              try {
-                val totalTime = new StopWatch
-                val oneTE = totalTime.measure {
-                  trainInternal(redrewDF)
-                }
-                println(s"Completed TE calculation on iteration $index and got TE value: $oneTE, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
-                Some(oneTE)
-              } catch {
-                case ex: Throwable =>
-                  println(s"TE calculation got exception on iteration $index with the redrew sample data. Exception ignored.")
-                  log.info(s"TE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
-                  None
+      // Create execution context based on $(parallelism)
+      log.info(s"Parallelism: $getParallelism")
+      val executionContext = getExecutionContextProxy
+
+      val teFutures = Range(0, getMaxIter).toArray.map { index =>
+        Future[Double] {
+          log.info(s"Executing ATE calculation on iteration: $index")
+          println(s"Executing ATE calculation on iteration: $index")
+          // sample data with replacement
+          val redrewDF =  if (getMaxIter == 1) dataset else dataset.sample(withReplacement = true, fraction = 1)
+          redrewDF.cache()
+          val te: Option[Double] =
+            try {
+              val totalTime = new StopWatch
+              val oneTE = totalTime.measure {
+                trainInternal(redrewDF)
               }
-            redrewDF.unpersist()
-            te.getOrElse(0.0)
-          }(executionContext)
-        }
+              println(s"Completed TE calculation on iteration $index and got TE value: $oneTE, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
+              Some(oneTE)
+            } catch {
+              case ex: Throwable =>
+                println(s"TE calculation got exception on iteration $index with the redrew sample data. Exception ignored.")
+                log.info(s"TE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
+                None
+            }
+          redrewDF.unpersist()
+          te.getOrElse(0.0)
+        }(executionContext)
+      }
 
-        val tes = awaitFutures(teFutures).filter(_ != 0.0).sorted
-        val ate = if (getMaxIter == 1) tes.head else tes.sum / tes.length
-        println(s"Completed $maxIter iteration TE calculations and got ${tes.length} values, ATE = $ate")
+      val tes = awaitFutures(teFutures).filter(_ != 0.0).sorted
+      val ate = if (getMaxIter == 1) tes.head else tes.sum / tes.length
+      println(s"Completed $maxIter iteration TE calculations and got ${tes.length} values, ATE = $ate")
 
-        dmlModel.setAte(ate)
-        if (tes.length > 1) {
-          val ci = Array(percentile[Double](tes, 2.5), percentile[Double](tes, 97.5))
-          dmlModel.setCi(ci)
-        }
+      dmlModel.setAte(ate)
+      if (tes.length > 1) {
+        val ci = Array(percentile[Double](tes, 2.5), percentile[Double](tes, 97.5))
+        dmlModel.setCi(ci)
       }
 
       dmlModel
