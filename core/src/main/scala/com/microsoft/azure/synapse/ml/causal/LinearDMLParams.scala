@@ -5,6 +5,7 @@ import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClas
 import org.apache.spark.ml.{Estimator, Model}
 import com.microsoft.azure.synapse.ml.param.{EstimatorParam, UntypedArrayParam}
 import org.apache.spark.ml.ParamInjections.HasParallelismInjected
+import org.apache.spark.ml.param.shared.HasMaxIter
 import org.apache.spark.ml.param.{IntParam, Param, Params}
 import org.apache.spark.ml.regression.Regressor
 
@@ -22,7 +23,7 @@ trait HasOutcomeCol extends Params {
 
 trait LinearDMLParams extends Params
   with HasTreatmentCol with HasOutcomeCol with HasFeaturesCol
-  with HasWeightCol with HasParallelismInjected {
+  with HasMaxIter with HasWeightCol with HasParallelismInjected {
 
   val treatmentModel = new EstimatorParam(this, "treatmentModel", "treatment model to run")
   def getTreatmentModel: Estimator[_ <: Model[_]] = $(treatmentModel)
@@ -63,10 +64,13 @@ trait LinearDMLParams extends Params
   def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio).map(_.toString.toDouble)
   def setSampleSplitRatio(value: Array[Any]): this.type = set(sampleSplitRatio, value)
 
-  val ciCalcIterations: IntParam = new IntParam(this,
-    "ciCalcIterations", "how many iterations you want to run to get confidence intervals.")
-  def getCiCalcIterations: Int = $(ciCalcIterations)
-  def setCiCalcIterations(value: Int): this.type = set(ciCalcIterations, value)
+  /**
+   * Set the maximum number of confidence interval bootstrapping iterations.
+   * Default is 1, which means it does not calculate confidence interval.
+   *
+   * @group setParam
+   */
+  def setMaxIter(value: Int): this.type = set(maxIter, value)
 
   def setParallelism(value: Int): this.type = set(parallelism, value)
 
@@ -74,7 +78,7 @@ trait LinearDMLParams extends Params
     treatmentModel -> new LogisticRegression(),
     outcomeModel -> new LogisticRegression(),
     sampleSplitRatio -> Array(0.5, 0.5),
-    ciCalcIterations -> 1,
+    maxIter -> 1,
     parallelism -> 10 // Best practice, a value up to 10 should be sufficient for most clusters.
   )
 }

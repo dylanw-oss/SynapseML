@@ -112,7 +112,7 @@ class LinearDMLEstimator(override val uid: String)
 
       val dmlModel = new LinearDMLModel()
 
-      if (get(ciCalcIterations).isDefined) {
+      if (get(maxIter).isDefined) {
         // Confidence intervals:
         // sampling with replacement to redraw data and get ATE value
         // Run it for multiple times in parallel, get a number of ATE values,
@@ -122,12 +122,12 @@ class LinearDMLEstimator(override val uid: String)
         log.info(s"Parallelism: $getParallelism")
         val executionContext = getExecutionContextProxy
 
-        val teFutures = Range(0, getCiCalcIterations).toArray.map { index =>
+        val teFutures = Range(0, getMaxIter).toArray.map { index =>
           Future[Double] {
             log.info(s"Executing ATE calculation on iteration: $index")
             println(s"Executing ATE calculation on iteration: $index")
             // sample data with replacement
-            val redrewDF =  if (ciCalcIterations == 1) dataset else dataset.sample(withReplacement = true, fraction = 1)
+            val redrewDF =  if (getMaxIter == 1) dataset else dataset.sample(withReplacement = true, fraction = 1)
             redrewDF.cache()
             val te: Option[Double] =
               try {
@@ -149,8 +149,8 @@ class LinearDMLEstimator(override val uid: String)
         }
 
         val tes = awaitFutures(teFutures).filter(_ != 0.0).sorted
-        val ate = if (ciCalcIterations == 1) tes(0) else (tes.sum / tes.length)
-        println(s"Completed $getCiCalcIterations iteration TE calculations and got ${tes.length} values, ATE = $ate")
+        val ate = if (getMaxIter == 1) tes.head else tes.sum / tes.length
+        println(s"Completed $maxIter iteration TE calculations and got ${tes.length} values, ATE = $ate")
 
         dmlModel.setAte(ate)
         if (tes.length > 1) {
