@@ -74,6 +74,7 @@ trait LinearDMLParams extends Params
     treatmentModel -> new LogisticRegression(),
     outcomeModel -> new LogisticRegression(),
     sampleSplitRatio -> Array(0.5, 0.5),
+    ciCalcIterations -> 1,
     parallelism -> 10 // Best practice, a value up to 10 should be sufficient for most clusters.
   )
 }
