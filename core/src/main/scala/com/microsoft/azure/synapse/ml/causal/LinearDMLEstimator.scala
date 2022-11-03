@@ -73,7 +73,7 @@ class LinearDMLEstimator(override val uid: String)
   /** Fits the LinearDML model.
    *
    * @param dataset The input dataset to train.
-   * @return The trained LinearDML model.
+   * @return The trained LinearDML model, from which you can get Ate and Ci values
    */
   override def fit(dataset: Dataset[_]): LinearDMLModel = {
     logFit({
@@ -90,71 +90,58 @@ class LinearDMLEstimator(override val uid: String)
 
       getTreatmentModel match {
         case m: HasLabelCol with HasFeaturesCol =>
-          m.set(m.labelCol, getTreatmentCol)
-          if (isDefined(featurizationModel)) {
-            m.set(m.featuresCol, getFeaturesCol)
-          } else {
-            m.set(m.featuresCol, "treatment_features")
-          }
+          m.set(m.labelCol, getTreatmentCol).set(m.featuresCol, "treatment_features")
         case _ => throw new Exception("The defined treatment model does not support HasLabelCol and HasFeaturesCol.")
       }
 
       getOutcomeModel match {
         case m: HasLabelCol with HasFeaturesCol =>
-          m.set(m.labelCol, getOutcomeCol)
-          if (isDefined(featurizationModel)) {
-            m.set(m.featuresCol, getFeaturesCol)
-          } else {
-            m.set(m.featuresCol, "outcome_features")
-          }
+          m.set(m.labelCol, getOutcomeCol).set(m.featuresCol, "outcome_features")
         case _ => throw new Exception("The defined outcome model does not support HasLabelCol and HasFeaturesCol.")
       }
 
       val dmlModel = new LinearDMLModel()
 
-
-      // Confidence intervals:
-      // sampling with replacement to redraw data and get ATE value
-      // Run it for multiple times in parallel, get a number of ATE values,
-      // Use 2.5% low end, 97.5% high as CI value
-
+      // sampling with replacement to redraw data and get TE value
+      // Run it for multiple times in parallel, get a number of TE values,
+      // Use average as Ate value, and 2.5% low end, 97.5% high end as Ci value
       // Create execution context based on $(parallelism)
       log.info(s"Parallelism: $getParallelism")
       val executionContext = getExecutionContextProxy
 
-      val teFutures = Range(0, getMaxIter).toArray.map { index =>
+      val ateFutures = Range(1, getMaxIter+1).toArray.map { index =>
         Future[Double] {
           log.info(s"Executing ATE calculation on iteration: $index")
           println(s"Executing ATE calculation on iteration: $index")
           // sample data with replacement
           val redrewDF =  if (getMaxIter == 1) dataset else dataset.sample(withReplacement = true, fraction = 1)
           redrewDF.cache()
-          val te: Option[Double] =
+          val ate: Option[Double] =
             try {
               val totalTime = new StopWatch
-              val oneTE = totalTime.measure {
+              val oneAte = totalTime.measure {
                 trainInternal(redrewDF)
               }
-              println(s"Completed TE calculation on iteration $index and got TE value: $oneTE, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
-              Some(oneTE)
+              println(s"Completed ATE calculation on iteration $index and got ATE value: $oneAte, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
+              Some(oneAte)
             } catch {
               case ex: Throwable =>
-                println(s"TE calculation got exception on iteration $index with the redrew sample data. Exception ignored.")
-                log.info(s"TE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
+                println(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception ignored.")
+                log.info(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
                 None
             }
           redrewDF.unpersist()
-          te.getOrElse(0.0)
+          ate.getOrElse(0.0)
         }(executionContext)
       }
 
-      val tes = awaitFutures(teFutures).filter(_ != 0.0).sorted
-      val ate = if (getMaxIter == 1) tes.head else tes.sum / tes.length
-      println(s"Completed $maxIter iteration TE calculations and got ${tes.length} values, ATE = $ate")
+      val ates = awaitFutures(ateFutures).filter(_ != 0.0).sorted
+      val finalAte = if (getMaxIter == 1) ates.head else ates.sum / ates.length
+      println(s"Completed $maxIter iteration ATE calculations and got ${ates.length} values, final ATE = $finalAte")
 
-      dmlModel.setAte(ate)
-      if (tes.length > 1) {
-        val ci = Array(percentile[Double](tes, 2.5), percentile[Double](tes, 97.5))
+      dmlModel.setAte(finalAte)
+      if (ates.length > 1) {
+        val ci = Array(percentile[Double](ates, 2.5), percentile[Double](ates, 97.5))
         dmlModel.setCi(ci)
       }
 
@@ -169,14 +156,15 @@ class LinearDMLEstimator(override val uid: String)
 
 
   private def trainInternal(dataset: Dataset[_]): Double = {
-    // treatment effect:
-    // 1. split sample, e.g. 50/50
-    // 2. use first sample data to fit treatment model and outcome model,
-    // 3. use two models on the second sample data to get residuals,
-    // 4. cross fitting to get another residuals,
-    // 5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
-    // 5. average treatment effects = (T1 + T2) / 2
-
+    // Note, we perform these steps to get ATE
+    /*
+      1. split sample, e.g. 50/50
+      2. use first sample data to fit treatment model and outcome model,
+      3. use two models on the second sample data to get residuals,
+      4. cross fitting to get another residuals,
+      5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
+      5. average treatment effects = (T1 + T2) / 2
+    */
     // Step 1 - split sample
     val splits = dataset.randomSplit(getSampleSplitRatio)
     val train = splits(0).cache()

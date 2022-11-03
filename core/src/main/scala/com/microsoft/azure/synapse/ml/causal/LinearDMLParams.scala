@@ -12,12 +12,24 @@ import org.apache.spark.ml.regression.Regressor
 trait HasTreatmentCol extends Params {
   val treatmentCol = new Param[String](this, "treatmentCol", "treatment column")
   def getTreatmentCol: String = $(treatmentCol)
+
+  /**
+   * Set name of the column which will be used as treatment
+   *
+   * @group setParam
+   */
   def setTreatmentCol(value: String): this.type = set(treatmentCol, value)
 }
 
 trait HasOutcomeCol extends Params {
   val outcomeCol: Param[String] = new Param[String](this, "outcomeCol", "outcome column")
   def getOutcomeCol: String = $(outcomeCol)
+
+  /**
+   * Set name of the column which will be used as outcome
+   *
+   * @group setParam
+   */
   def setOutcomeCol(value: String): this.type = set(outcomeCol, value)
 }
 
@@ -27,8 +39,13 @@ trait LinearDMLParams extends Params
 
   val treatmentModel = new EstimatorParam(this, "treatmentModel", "treatment model to run")
   def getTreatmentModel: Estimator[_ <: Model[_]] = $(treatmentModel)
-  def setTreatmentModel(value: Estimator[_ <: Model[_]]): this.type = {
 
+  /**
+   * Set treatment model, it could be any model derived from 'org.apache.spark.ml.regression.Regressor' or 'org.apache.spark.ml.classification.ProbabilisticClassifier'
+   *
+   * @group setParam
+   */
+  def setTreatmentModel(value: Estimator[_ <: Model[_]]): this.type = {
     val isSupportedModel = value match {
       case regressor: Regressor[_,_,_] =>   true // for continuous treatment
       case classifier: ProbabilisticClassifier[_, _, _] => true
@@ -42,6 +59,12 @@ trait LinearDMLParams extends Params
 
   val outcomeModel = new EstimatorParam(this, "outcomeModel", "outcome model to run")
   def getOutcomeModel: Estimator[_ <: Model[_]] = $(outcomeModel)
+
+  /**
+   * Set outcome model, it could be any model derived from 'org.apache.spark.ml.regression.Regressor' or 'org.apache.spark.ml.classification.ProbabilisticClassifier'
+   *
+   * @group setParam
+   */
   def setOutcomeModel(value: Estimator[_ <: Model[_]]): this.type = {
     val isSupportedModel = value match {
       case regressor: Regressor[_,_,_] =>   true
@@ -54,19 +77,21 @@ trait LinearDMLParams extends Params
     set(outcomeModel, value)
   }
 
-  val featurizationModel = new EstimatorParam(this,
-    "featurizationModel", "featurization model to run preprocessing data")
-  def getFeaturizationModel: Estimator[_ <: Model[_]] = $(featurizationModel)
-  def setFeaturizationModel(value: Estimator[_ <: Model[_]]): this.type =  set(featurizationModel, value)
-
   val sampleSplitRatio = new UntypedArrayParam(this,
     "SampleSplitRatio", "SampleSplitRatio")
   def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio).map(_.toString.toDouble)
+
+  /**
+   * Set the sample split ratio, default is Array(0.5, 0.5)
+   *
+   * @group setParam
+   */
   def setSampleSplitRatio(value: Array[Any]): this.type = set(sampleSplitRatio, value)
 
   /**
    * Set the maximum number of confidence interval bootstrapping iterations.
    * Default is 1, which means it does not calculate confidence interval.
+   * To get Ci values please set a meaningful value
    *
    * @group setParam
    */
