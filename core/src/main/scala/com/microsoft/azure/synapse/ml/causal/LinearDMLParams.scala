@@ -90,8 +90,6 @@ trait LinearDMLParams extends Params
   def setParallelism(value: Int): this.type = set(parallelism, value)
 
   setDefault(
-    treatmentCol -> "Label",
-    outcomeCol -> "Label",
     treatmentModel -> new LogisticRegression(),
     outcomeModel -> new LogisticRegression(),
     sampleSplitRatio -> Array(0.5, 0.5),
