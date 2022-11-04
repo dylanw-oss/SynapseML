@@ -1,10 +1,8 @@
 package com.microsoft.azure.synapse.ml.causal
 
 import com.microsoft.azure.synapse.ml.core.test.base.TestBase
-import org.apache.spark.ml.linalg.DenseVector
-import org.apache.spark.ml.regression.{LinearRegression, RandomForestRegressor}
+import org.apache.spark.ml.regression.RandomForestRegressor
 import org.apache.spark.ml.classification.LogisticRegression
-import org.apache.spark.sql.DataFrame
 
 class VerifyLinearDMLEstimator extends TestBase {
 
@@ -13,7 +11,7 @@ class VerifyLinearDMLEstimator extends TestBase {
   val cat = "Cat"
   val dog = "Dog"
   val bird = "Bird"
-  private lazy val mockDataset= spark.createDataFrame(Seq(
+  private lazy val mockDataset = spark.createDataFrame(Seq(
     (0, 1, 0.50, 0.60, dog, cat),
     (1, 0, 0.40, 0.50, cat, dog),
     (0, 1, 0.78, 0.99, dog, bird),
@@ -58,7 +56,7 @@ class VerifyLinearDMLEstimator extends TestBase {
       .setTreatmentCol(mockLabelColumn)
       .setOutcomeModel(new RandomForestRegressor())
       .setOutcomeCol("col2")
-      .setMaxIter(30)
+      .setMaxIter(10)
 
     var ldmlModel = ldml.fit(mockDataset)
     assert(ldmlModel.getCi.length == 2)

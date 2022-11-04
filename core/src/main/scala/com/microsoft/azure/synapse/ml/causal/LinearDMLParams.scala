@@ -3,10 +3,10 @@ package com.microsoft.azure.synapse.ml.causal
 import com.microsoft.azure.synapse.ml.core.contracts.{HasFeaturesCol, HasWeightCol}
 import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClassifier}
 import org.apache.spark.ml.{Estimator, Model}
-import com.microsoft.azure.synapse.ml.param.{EstimatorParam, UntypedArrayParam}
+import com.microsoft.azure.synapse.ml.param.EstimatorParam
 import org.apache.spark.ml.ParamInjections.HasParallelismInjected
 import org.apache.spark.ml.param.shared.HasMaxIter
-import org.apache.spark.ml.param.{IntParam, Param, Params}
+import org.apache.spark.ml.param.{DoubleArrayParam, Param, Params}
 import org.apache.spark.ml.regression.Regressor
 
 trait HasTreatmentCol extends Params {
@@ -46,14 +46,7 @@ trait LinearDMLParams extends Params
    * @group setParam
    */
   def setTreatmentModel(value: Estimator[_ <: Model[_]]): this.type = {
-    val isSupportedModel = value match {
-      case regressor: Regressor[_,_,_] =>   true // for continuous treatment
-      case classifier: ProbabilisticClassifier[_, _, _] => true
-      case _ => false
-    }
-    if (!isSupportedModel)  {
-      throw new Exception("LinearDML only support regressor and ProbabilisticClassifier as treatment model")
-    }
+    EnsureSupportedEstimator(value)
     set(treatmentModel, value)
   }
 
@@ -66,27 +59,24 @@ trait LinearDMLParams extends Params
    * @group setParam
    */
   def setOutcomeModel(value: Estimator[_ <: Model[_]]): this.type = {
-    val isSupportedModel = value match {
-      case regressor: Regressor[_,_,_] =>   true
-      case classifier: ProbabilisticClassifier[_, _, _] => true
-      case _ => false
-    }
-    if (!isSupportedModel)  {
-      throw new Exception("LinearDML only support regressor and ProbabilisticClassifier as outcome model")
-    }
+    EnsureSupportedEstimator(value)
     set(outcomeModel, value)
   }
 
-  val sampleSplitRatio = new UntypedArrayParam(this,
-    "SampleSplitRatio", "SampleSplitRatio")
-  def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio).map(_.toString.toDouble)
+  val sampleSplitRatio = new DoubleArrayParam(
+    this,
+    "SampleSplitRatio",
+    "Sample split ratio for cross-fitting. Default: [0.5, 0.5].",
+    split => split.length == 2 && split.forall(_ >= 0)
+  )
+  def getSampleSplitRatio: Array[Double] = $(sampleSplitRatio).map(v => v / $(sampleSplitRatio).sum)
 
   /**
    * Set the sample split ratio, default is Array(0.5, 0.5)
    *
    * @group setParam
    */
-  def setSampleSplitRatio(value: Array[Any]): this.type = set(sampleSplitRatio, value)
+  def setSampleSplitRatio(value: Array[Double]): this.type = set(sampleSplitRatio, value)
 
   /**
    * Set the maximum number of confidence interval bootstrapping iterations.
@@ -100,10 +90,23 @@ trait LinearDMLParams extends Params
   def setParallelism(value: Int): this.type = set(parallelism, value)
 
   setDefault(
+    treatmentCol -> "Label",
+    outcomeCol -> "Label",
     treatmentModel -> new LogisticRegression(),
     outcomeModel -> new LogisticRegression(),
     sampleSplitRatio -> Array(0.5, 0.5),
     maxIter -> 1,
     parallelism -> 10 // Best practice, a value up to 10 should be sufficient for most clusters.
   )
+
+  private def EnsureSupportedEstimator(value: Estimator[_ <: Model[_]]): Unit = {
+    val isSupportedModel = value match {
+      case regressor: Regressor[_, _, _] => true // for continuous treatment
+      case classifier: ProbabilisticClassifier[_, _, _] => true
+      case _ => false
+    }
+    if (!isSupportedModel) {
+      throw new Exception("LinearDML only support regressor and ProbabilisticClassifier as treatment or outcome model")
+    }
+  }
 }

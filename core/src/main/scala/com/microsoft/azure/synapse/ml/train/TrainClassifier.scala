@@ -101,8 +101,17 @@ class TrainClassifier(override val uid: String) extends AutoTrainer[TrainedClass
   //noinspection ScalaStyle
   override def fit(dataset: Dataset[_]): TrainedClassifierModel = {
     logFit({
+      val labelValues =
+        if (isDefined(labels)) {
+          Some(getLabels)
+        } else {
+          None
+        }
 
-      val (processedData, featurizedModel, levels, modifyInputLayer) = getFeaturizedDataAndModel(dataset)
+      // Convert label column to categorical on train, remove rows with missing labels
+      val (convertedLabelDataset, levels) = convertLabel(dataset, getLabelCol, labelValues)
+
+      val (oneHotEncodeCategoricals, modifyInputLayer, numFeatures) = getFeaturizeParams
 
       var classifier: Estimator[_ <: PipelineStage] = getModel match {
         case logisticRegressionClassifier: LogisticRegression =>
@@ -138,6 +147,24 @@ class TrainClassifier(override val uid: String) extends AutoTrainer[TrainedClass
           default
       }
 
+      val featuresToHashTo =
+        if (getNumFeatures != 0) {
+          getNumFeatures
+        } else {
+          numFeatures
+        }
+
+      val nonFeatureColumns = getLabelCol +: getExcludedFeatures
+      val featureColumns = convertedLabelDataset.columns.filterNot(nonFeatureColumns.contains)
+
+      val featurizer = new Featurize()
+        .setOutputCol(getFeaturesCol)
+        .setInputCols(featureColumns)
+        .setOneHotEncodeCategoricals(oneHotEncodeCategoricals)
+        .setNumFeatures(featuresToHashTo)
+      val featurizedModel = featurizer.fit(convertedLabelDataset)
+      val processedData = featurizedModel.transform(convertedLabelDataset)
+
       processedData.cache()
 
       // For neural network, need to modify input layer so it will automatically work during train
@@ -156,7 +183,7 @@ class TrainClassifier(override val uid: String) extends AutoTrainer[TrainedClass
       processedData.unpersist()
 
       // Note: The fit shouldn't do anything here
-      val pipelineModel = new Pipeline().setStages(Array(featurizedModel, fitModel)).fit(dataset)
+      val pipelineModel = new Pipeline().setStages(Array(featurizedModel, fitModel)).fit(convertedLabelDataset)
       val model = new TrainedClassifierModel()
         .setLabelCol(getLabelCol)
         .setModel(pipelineModel)
@@ -186,7 +213,7 @@ class TrainClassifier(override val uid: String) extends AutoTrainer[TrainedClass
         numFeatures
       }
 
-    val nonFeatureColumns = getLabelCol +: getExcludedFeatureCols
+    val nonFeatureColumns = getLabelCol +: getExcludedFeatures
     val featureColumns = convertedLabelDataset.columns.filter(col => !nonFeatureColumns.contains(col)).toSeq
 
     val featurizer = new Featurize()

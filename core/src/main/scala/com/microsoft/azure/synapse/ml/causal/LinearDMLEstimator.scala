@@ -63,7 +63,7 @@ import scala.concurrent.Future
  */
 //noinspection ScalaStyle
 class LinearDMLEstimator(override val uid: String)
-  extends Estimator[LinearDMLModel]
+  extends Estimator[LinearDMLModel] with ComplexParamsWritable
     with LinearDMLParams with BasicLogging with Wrappable {
 
   logClass()
@@ -171,41 +171,45 @@ class LinearDMLEstimator(override val uid: String)
     val test = splits(1).cache()
 
     // Step 2 - use first sample data to fit treatment model and outcome model
-    val (treatmentEstimator, treatmentPredictionColName) = getTreatmentModel match {
+    val (treatmentEstimator, treatmentResidualPredictionColName, treatmentPredictionColsToDrop) = getTreatmentModel match {
       case classifier: ProbabilisticClassifier[_, _, _] => (
         new TrainClassifier()
           .setFeaturesCol("treatment_features")
           .setModel(getTreatmentModel)
           .setLabelCol(getTreatmentCol)
-          .setExcludedFeatureCols(Array(getOutcomeCol)),
-        classifier.getProbabilityCol
+          .setExcludedFeatures(Array(getOutcomeCol)),
+        classifier.getProbabilityCol,
+        Seq(classifier.getPredictionCol, classifier.getProbabilityCol, classifier.getRawPredictionCol)
       )
       case regressor: Regressor[_, _, _] => (
         new TrainRegressor()
           .setFeaturesCol("treatment_features")
           .setModel(getTreatmentModel)
           .setLabelCol(getTreatmentCol)
-          .setExcludedFeatureCols(Array(getOutcomeCol)),
-        regressor.getPredictionCol
+          .setExcludedFeatures(Array(getOutcomeCol)),
+        regressor.getPredictionCol,
+        Seq(regressor.getPredictionCol)
       )
     }
 
-    val (outcomeEstimator, outcomePredictionColName) = getOutcomeModel match {
+    val (outcomeEstimator, outcomeResidualPredictionColName, outcomePredictionColsToDrop) = getOutcomeModel match {
       case classifier: ProbabilisticClassifier[_, _, _] => (
         new TrainClassifier()
           .setFeaturesCol("outcome_features")
           .setModel(getOutcomeModel)
           .setLabelCol(getOutcomeCol)
-          .setExcludedFeatureCols(Array(getTreatmentCol)),
-        classifier.getProbabilityCol
+          .setExcludedFeatures(Array(getTreatmentCol)),
+        classifier.getProbabilityCol,
+        Seq(classifier.getPredictionCol, classifier.getProbabilityCol, classifier.getRawPredictionCol)
       )
       case regressor: Regressor[_, _, _] => (
         new TrainRegressor()
           .setFeaturesCol("outcome_features")
           .setModel(getOutcomeModel)
           .setLabelCol(getOutcomeCol)
-          .setExcludedFeatureCols(Array(getTreatmentCol)),
-        regressor.getPredictionCol
+          .setExcludedFeatures(Array(getTreatmentCol)),
+        regressor.getPredictionCol,
+        Seq(regressor.getPredictionCol)
       )
     }
 
@@ -217,17 +221,20 @@ class LinearDMLEstimator(override val uid: String)
     val treatmentResidualDFV1 =
       new ComputeResidualTransformer()
         .setObservedCol(getTreatmentCol)
-        .setPredictedCol(treatmentPredictionColName)
-        .setOutputCol(SchemaConstants.TreatmentResidualColumn)
+        .setPredictedCol(treatmentResidualPredictionColName)
+        .setOutcomeCol(SchemaConstants.TreatmentResidualColumn)
         .transform(treatmentPredictedDFV1)
+        .drop(treatmentPredictionColsToDrop: _*)
 
     val outcomePredictedDFV1 = outcomeModelV1.transform(treatmentResidualDFV1)
+
     val residualsDFV1 =
       new ComputeResidualTransformer()
         .setObservedCol(getOutcomeCol)
-        .setPredictedCol(outcomePredictionColName)
-        .setOutputCol(SchemaConstants.OutcomeResidualColumn)
+        .setPredictedCol(outcomeResidualPredictionColName)
+        .setOutcomeCol(SchemaConstants.OutcomeResidualColumn)
         .transform(outcomePredictedDFV1)
+        .drop(outcomePredictionColsToDrop: _*)
 
     // Step 4 - cross fitting to get another residuals
     val treatmentModelV2 = treatmentEstimator.fit(test)
@@ -237,17 +244,19 @@ class LinearDMLEstimator(override val uid: String)
     val treatmentResidualDFV2 =
       new ComputeResidualTransformer()
         .setObservedCol(getTreatmentCol)
-        .setPredictedCol(treatmentPredictionColName)
-        .setOutputCol(SchemaConstants.TreatmentResidualColumn)
+        .setPredictedCol(treatmentResidualPredictionColName)
+        .setOutcomeCol(SchemaConstants.TreatmentResidualColumn)
         .transform(treatmentPredictedDFV2)
+        .drop(treatmentPredictionColsToDrop: _*)
 
     val outcomePredictedDFV2 = outcomeModelV2.transform(treatmentResidualDFV2)
     val residualsDFV2 =
       new ComputeResidualTransformer()
         .setObservedCol(getOutcomeCol)
-        .setPredictedCol(outcomePredictionColName)
-        .setOutputCol(SchemaConstants.OutcomeResidualColumn)
+        .setPredictedCol(outcomeResidualPredictionColName)
+        .setOutcomeCol(SchemaConstants.OutcomeResidualColumn)
         .transform(outcomePredictedDFV2)
+        .drop(outcomePredictionColsToDrop: _*)
 
     // 5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
     val va: Array[PipelineStage] = Array(
@@ -296,7 +305,7 @@ object LinearDMLEstimator extends ComplexParamsReadable[LinearDMLEstimator] {
 
 /** Model produced by [[LinearDMLEstimator]]. */
 class LinearDMLModel(val uid: String)
-  extends Model[LinearDMLModel] with Wrappable with BasicLogging {
+  extends Model[LinearDMLModel] with ComplexParamsWritable with Wrappable with BasicLogging {
   logClass()
 
   def this() = this(Identifiable.randomUID("LinearDMLModel"))

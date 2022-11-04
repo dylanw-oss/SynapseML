@@ -157,7 +157,7 @@ class VerifyTrainClassifier extends Benchmarks with EstimatorFuzzing[TrainClassi
         .setModel(new LogisticRegression())
         .setLabelCol(mockLabelCol)
         .setFeaturesCol("features")
-        .setExcludedFeatureCols(Array("col4", "col5"))
+        .setExcludedFeatures(Array("col4", "col5"))
     val (processedDF, _, _, _) = logisticRegressor.getFeaturizedDataAndModel(catDataset)
 
     val row = processedDF.select("features").head
