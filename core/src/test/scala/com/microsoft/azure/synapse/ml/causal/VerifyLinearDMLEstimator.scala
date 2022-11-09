@@ -1,10 +1,11 @@
 package com.microsoft.azure.synapse.ml.causal
 
-import com.microsoft.azure.synapse.ml.core.test.base.TestBase
+import com.microsoft.azure.synapse.ml.core.test.fuzzing.{EstimatorFuzzing, TestObject}
 import org.apache.spark.ml.regression.RandomForestRegressor
 import org.apache.spark.ml.classification.LogisticRegression
+import org.apache.spark.ml.util.MLReadable
 
-class VerifyLinearDMLEstimator extends TestBase {
+class VerifyLinearDMLEstimator extends EstimatorFuzzing[LinearDMLEstimator] {
 
   val mockLabelColumn = "Label"
 
@@ -61,4 +62,17 @@ class VerifyLinearDMLEstimator extends TestBase {
     var ldmlModel = ldml.fit(mockDataset)
     assert(ldmlModel.getCi.length == 2)
   }
+
+
+  override def testObjects(): Seq[TestObject[LinearDMLEstimator]] =
+    Seq(new TestObject(new LinearDMLEstimator()
+      .setTreatmentModel(new LogisticRegression())
+      .setTreatmentCol(mockLabelColumn)
+      .setOutcomeModel(new RandomForestRegressor())
+      .setOutcomeCol("col2"),
+    mockDataset))
+
+  override def reader: MLReadable[_] = LinearDMLEstimator
+
+  override def modelReader: MLReadable[_] = LinearDMLModel
 }
