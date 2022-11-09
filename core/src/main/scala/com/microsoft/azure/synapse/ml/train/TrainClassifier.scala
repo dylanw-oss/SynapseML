@@ -193,38 +193,6 @@ class TrainClassifier(override val uid: String) extends AutoTrainer[TrainedClass
     })
   }
 
-  def getFeaturizedDataAndModel(dataset: Dataset[_]): (DataFrame, PipelineModel, Option[Array[_]], Boolean) = {
-    val labelValues =
-      if (isDefined(labels)) {
-        Some(getLabels)
-      } else {
-        None
-      }
-    // Convert label column to categorical on train, remove rows with missing labels
-    val (convertedLabelDataset, levels) = convertLabel(dataset, getLabelCol, labelValues)
-
-    val (oneHotEncodeCategoricals, modifyInputLayer, numFeatures) = getFeaturizeParams
-
-
-    val featuresToHashTo =
-      if (getNumFeatures != 0) {
-        getNumFeatures
-      } else {
-        numFeatures
-      }
-
-    val nonFeatureColumns = getLabelCol +: getExcludedFeatures
-    val featureColumns = convertedLabelDataset.columns.filter(col => !nonFeatureColumns.contains(col)).toSeq
-
-    val featurizer = new Featurize()
-      .setOutputCol(getFeaturesCol)
-      .setInputCols(featureColumns.toArray)
-      .setOneHotEncodeCategoricals(oneHotEncodeCategoricals)
-      .setNumFeatures(featuresToHashTo)
-    val featurizedModel = featurizer.fit(convertedLabelDataset)
-    (featurizedModel.transform(convertedLabelDataset), featurizedModel, levels, modifyInputLayer)
-  }
-
   def getFeaturizeParams: (Boolean, Boolean, Int) = {
     var oneHotEncodeCategoricals = true
     var modifyInputLayer = false
