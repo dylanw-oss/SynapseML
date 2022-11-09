@@ -237,20 +237,18 @@ class LinearDMLEstimator(override val uid: String)
     val dropOutcomePredictedColumnsTransformer = new DropColumns().setCols(outcomePredictionColsToDrop.toArray)
 
 
-    val stage1Pipeline = new Pipeline()
-      .setStages(
-        Array(treatmentModelV1,
-          treatmentResidualDFV1,
-          dropTreatmentPredictedColumnsTransformer,
-          outcomeModelV1,
-          residualsDFV1,
-          dropOutcomePredictedColumnsTransformer,
-          new VectorAssembler()
-            .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
-            .setOutputCol("treatmentResidualVec")
-            .setHandleInvalid("skip"),
-          new DropColumns().setCols(Array(SchemaConstants.TreatmentResidualColumn))
-      )
+    val stage1Pipeline = new Pipeline().setStages(
+      Array(treatmentModelV1,
+        treatmentResidualDFV1,
+        dropTreatmentPredictedColumnsTransformer,
+        outcomeModelV1,
+        residualsDFV1,
+        dropOutcomePredictedColumnsTransformer,
+        new VectorAssembler()
+          .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
+          .setOutputCol("treatmentResidualVec")
+          .setHandleInvalid("skip"),
+        new DropColumns().setCols(Array(SchemaConstants.TreatmentResidualColumn)))
     )
     val dataset1 = stage1Pipeline.fit(test).transform(test)
 
@@ -264,7 +262,13 @@ class LinearDMLEstimator(override val uid: String)
         dropTreatmentPredictedColumnsTransformer,
         outcomeModelV2,
         residualsDFV1,
-        dropOutcomePredictedColumnsTransformer))
+        dropOutcomePredictedColumnsTransformer,
+        new VectorAssembler()
+          .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
+          .setOutputCol("treatmentResidualVec")
+          .setHandleInvalid("skip"),
+        new DropColumns().setCols(Array(SchemaConstants.TreatmentResidualColumn)))
+    )
     val dataset2 = stage2Pipeline.fit(train).transform(train)
     
     val regressor = new GeneralizedLinearRegression()
