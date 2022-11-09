@@ -80,11 +80,15 @@ class LinearDMLEstimator(override val uid: String)
       if (get(weightCol).isDefined) {
         getTreatmentModel match {
           case w: HasWeightCol => w.set(w.weightCol, getWeightCol)
-          case _ => throw new Exception("The defined treatment model does not support weightCol.")
+          case _ => throw new Exception("""The selected treatment model does not support sample weight,
+            but the weightCol parameter was set for the LinearDMLEstimator.
+            Please select a treatment model that supports sample weight.""".stripMargin)
         }
         getOutcomeModel match {
           case w: HasWeightCol => w.set(w.weightCol, getWeightCol)
-          case _ => throw new Exception("The defined outcome model does not support weightCol.")
+          case _ => throw new Exception("""The selected outcome model does not support sample weight,
+            but the weightCol parameter was set for the LinearDMLEstimator.
+            Please select a outcome model that supports sample weight.""".stripMargin)
         }
       }
 
@@ -217,56 +221,52 @@ class LinearDMLEstimator(override val uid: String)
     val outcomeModelV1 = outcomeEstimator.fit(train)
 
     // Step 3 - use second sample data to get predictions and compute residuals
-    val treatmentPredictedDFV1 = treatmentModelV1.transform(test)
     val treatmentResidualDFV1 =
       new ComputeResidualTransformer()
         .setObservedCol(getTreatmentCol)
         .setPredictedCol(treatmentResidualPredictionColName)
         .setOutcomeCol(SchemaConstants.TreatmentResidualColumn)
-        .transform(treatmentPredictedDFV1)
-        .drop(treatmentPredictionColsToDrop: _*)
 
-    val outcomePredictedDFV1 = outcomeModelV1.transform(treatmentResidualDFV1)
+    val dropTreatmentPredictedColumnsTransformer = new DropColumns().setCols(treatmentPredictionColsToDrop.toArray)
 
     val residualsDFV1 =
       new ComputeResidualTransformer()
         .setObservedCol(getOutcomeCol)
         .setPredictedCol(outcomeResidualPredictionColName)
         .setOutcomeCol(SchemaConstants.OutcomeResidualColumn)
-        .transform(outcomePredictedDFV1)
-        .drop(outcomePredictionColsToDrop: _*)
+    val dropOutcomePredictedColumnsTransformer = new DropColumns().setCols(outcomePredictionColsToDrop.toArray)
+
+
+    val stage1Pipeline = new Pipeline()
+      .setStages(
+        Array(treatmentModelV1,
+          treatmentResidualDFV1,
+          dropTreatmentPredictedColumnsTransformer,
+          outcomeModelV1,
+          residualsDFV1,
+          dropOutcomePredictedColumnsTransformer,
+          new VectorAssembler()
+            .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
+            .setOutputCol("treatmentResidualVec")
+            .setHandleInvalid("skip"),
+          new DropColumns().setCols(Array(SchemaConstants.TreatmentResidualColumn))
+      )
+    )
+    val dataset1 = stage1Pipeline.fit(test).transform(test)
 
     // Step 4 - cross fitting to get another residuals
     val treatmentModelV2 = treatmentEstimator.fit(test)
     val outcomeModelV2 = outcomeEstimator.fit(test)
 
-    val treatmentPredictedDFV2 = treatmentModelV2.transform(train)
-    val treatmentResidualDFV2 =
-      new ComputeResidualTransformer()
-        .setObservedCol(getTreatmentCol)
-        .setPredictedCol(treatmentResidualPredictionColName)
-        .setOutcomeCol(SchemaConstants.TreatmentResidualColumn)
-        .transform(treatmentPredictedDFV2)
-        .drop(treatmentPredictionColsToDrop: _*)
-
-    val outcomePredictedDFV2 = outcomeModelV2.transform(treatmentResidualDFV2)
-    val residualsDFV2 =
-      new ComputeResidualTransformer()
-        .setObservedCol(getOutcomeCol)
-        .setPredictedCol(outcomeResidualPredictionColName)
-        .setOutcomeCol(SchemaConstants.OutcomeResidualColumn)
-        .transform(outcomePredictedDFV2)
-        .drop(outcomePredictionColsToDrop: _*)
-
-    // 5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
-    val va: Array[PipelineStage] = Array(
-      new VectorAssembler()
-        .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
-        .setOutputCol("treatmentResidualVec")
-        .setHandleInvalid("skip"),
-      new DropColumns().setCols(Array(SchemaConstants.TreatmentResidualColumn))
-    )
-
+    val stage2Pipeline = new Pipeline().setStages(
+      Array(treatmentModelV2,
+        treatmentResidualDFV1,
+        dropTreatmentPredictedColumnsTransformer,
+        outcomeModelV2,
+        residualsDFV1,
+        dropOutcomePredictedColumnsTransformer))
+    val dataset2 = stage2Pipeline.fit(train).transform(train)
+    
     val regressor = new GeneralizedLinearRegression()
       .setLabelCol(SchemaConstants.OutcomeResidualColumn)
       .setFeaturesCol("treatmentResidualVec")
@@ -274,14 +274,11 @@ class LinearDMLEstimator(override val uid: String)
       .setLink("identity")
       .setFitIntercept(false)
 
-    val lrmPipelineModelV1 = new Pipeline().setStages(va :+ regressor).fit(residualsDFV1)
-    val lrmV1 = lrmPipelineModelV1.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
-    val lrmPipelineModelV2 = new Pipeline().setStages(va :+ regressor).fit(residualsDFV2)
-    val lrmV2 = lrmPipelineModelV2.stages.last.asInstanceOf[GeneralizedLinearRegressionModel]
+      val lrmV1 = regressor.fit(dataset1)
+      val lrmV2 = regressor.fit(dataset2)
 
     // Step 6 - final treatment effects = (T1 + T2) / 2
-    val ate = (lrmV1.coefficients.asInstanceOf[DenseVector].values(0)
-      + lrmV2.coefficients.asInstanceOf[DenseVector].values(0)) / 2.0
+    val ate = Seq(lrmV1, lrmV2).map(_.coefficients(0)).sum / 2
 
     ate
   }
@@ -308,6 +305,8 @@ class LinearDMLModel(val uid: String)
   extends Model[LinearDMLModel] with ComplexParamsWritable with Wrappable with BasicLogging {
   logClass()
 
+
+
   def this() = this(Identifiable.randomUID("LinearDMLModel"))
 
   val ate = new Param[Double](this, "ate", "average treatment effect")
@@ -320,8 +319,10 @@ class LinearDMLModel(val uid: String)
 
   override def copy(extra: ParamMap): LinearDMLModel = defaultCopy(extra)
 
+  // Todo: return ate array
   //scalastyle:off
   override def transform(dataset: Dataset[_]): DataFrame = {
+    // TODO: transform return dataset
     logTransform[DataFrame]({
       throw new Exception("transform is invalid for LinearDMLEstimator.")
     })

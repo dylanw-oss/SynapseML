@@ -129,41 +129,6 @@ class VerifyTrainClassifier extends Benchmarks with EstimatorFuzzing[TrainClassi
     trainScoreDataset(mockLabelCol, dataset, logisticRegressor)
   }
 
-  test("Verify getFeaturizedDataAndModel with setExcludedFeatureCols") {
-    val cat = "Cat"
-    val dog = "Dog"
-    val bird = "Bird"
-    val dataset: DataFrame = spark.createDataFrame(Seq(
-      (0, 2, 0.50, 0.60, dog, cat),
-      (1, 3, 0.40, 0.50, cat, dog),
-      (0, 4, 0.78, 0.99, dog, bird),
-      (1, 5, 0.12, 0.34, cat, dog),
-      (0, 1, 0.50, 0.60, dog, bird),
-      (1, 3, 0.40, 0.50, bird, dog),
-      (0, 3, 0.78, 0.99, dog, cat),
-      (1, 4, 0.12, 0.34, cat, dog),
-      (0, 0, 0.50, 0.60, dog, cat),
-      (1, 2, 0.40, 0.50, bird, dog),
-      (0, 3, 0.78, 0.99, dog, bird),
-      (1, 4, 0.12, 0.34, cat, dog)))
-      .toDF(mockLabelCol, "col1", "col2", "col3", "col4", "col5")
-
-    val model1 = new ValueIndexer().setInputCol("col4").setOutputCol("col4").fit(dataset)
-    val model2 = new ValueIndexer().setInputCol("col5").setOutputCol("col5").fit(dataset)
-    val catDataset = model1.transform(model2.transform(dataset))
-
-    val logisticRegressor =
-      new TrainClassifier()
-        .setModel(new LogisticRegression())
-        .setLabelCol(mockLabelCol)
-        .setFeaturesCol("features")
-        .setExcludedFeatures(Array("col4", "col5"))
-    val (processedDF, _, _, _) = logisticRegressor.getFeaturizedDataAndModel(catDataset)
-
-    val row = processedDF.select("features").head
-    assert(row(0).asInstanceOf[DenseVector].size == 3)
-  }
-
   override val testFitting: Boolean = true
 
   verifyMultiClassCSV("abalone.csv", "Rings", 2, includeNaiveBayes = true)
