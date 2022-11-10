@@ -5,7 +5,7 @@ package com.microsoft.azure.synapse.ml.causal
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.train._
-import com.microsoft.azure.synapse.ml.core.schema.SchemaConstants
+import com.microsoft.azure.synapse.ml.core.schema.{DatasetExtensions, SchemaConstants}
 import com.microsoft.azure.synapse.ml.core.utils.StopWatch
 import com.microsoft.azure.synapse.ml.logging.BasicLogging
 import com.microsoft.azure.synapse.ml.stages.DropColumns
@@ -92,18 +92,6 @@ class LinearDMLEstimator(override val uid: String)
         }
       }
 
-      getTreatmentModel match {
-        case m: HasLabelCol with HasFeaturesCol =>
-          m.set(m.labelCol, getTreatmentCol).set(m.featuresCol, "treatment_features")
-        case _ => throw new Exception("The defined treatment model does not support HasLabelCol and HasFeaturesCol.")
-      }
-
-      getOutcomeModel match {
-        case m: HasLabelCol with HasFeaturesCol =>
-          m.set(m.labelCol, getOutcomeCol).set(m.featuresCol, "outcome_features")
-        case _ => throw new Exception("The defined outcome model does not support HasLabelCol and HasFeaturesCol.")
-      }
-
       // sampling with replacement to redraw data and get TE value
       // Run it for multiple times in parallel, get a number of TE values,
       // Use average as Ate value, and 2.5% low end, 97.5% high end as Ci value
@@ -111,7 +99,7 @@ class LinearDMLEstimator(override val uid: String)
       log.info(s"Parallelism: $getParallelism")
       val executionContext = getExecutionContextProxy
 
-      val ateFutures = (1, getMaxIter+1).toArray.map { index =>
+      val ateFutures = Range(1, getMaxIter+1).toArray.map { index =>
         Future[Option[Double]] {
           log.info(s"Executing ATE calculation on iteration: $index")
           // If the algorithm runs over 1 iteration, do not bootstrap from dataset, otherwise, draw sample with replacement
@@ -123,7 +111,7 @@ class LinearDMLEstimator(override val uid: String)
               val oneAte = totalTime.measure {
                 trainInternal(redrewDF)
               }
-              log.info(s"Completed ATE calculation on iteration $index and got ATE value: $oneAte, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
+              println(s"Completed ATE calculation on iteration $index and got ATE value: $oneAte, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
               Some(oneAte)
             } catch {
               case ex: Throwable =>
@@ -136,6 +124,7 @@ class LinearDMLEstimator(override val uid: String)
       }
 
       val ates = awaitFutures(ateFutures).flatten.sorted
+      println(ates)
       val finalAte = if (getMaxIter == 1) ates.head else ates.sum / ates.length
       println(s"Completed $getMaxIter iteration ATE calculations and got ${ates.length} values, final ATE = $finalAte")
       val dmlModel = new LinearDMLModel().setAtes(ates.toArray).setAte(finalAte)
@@ -157,10 +146,13 @@ class LinearDMLEstimator(override val uid: String)
 
   private def trainInternal(dataset: Dataset[_]): Double = {
     // setup estimators
+    val treatmentFeaturesColName = DatasetExtensions.findUnusedColumnName("treatment_features", dataset)
+    val outcomeFeaturesColName = DatasetExtensions.findUnusedColumnName("outcome_features", dataset)
+
     val (treatmentEstimator, treatmentResidualPredictionColName, treatmentPredictionColsToDrop) = getTreatmentModel match {
       case classifier: ProbabilisticClassifier[_, _, _] => (
         new TrainClassifier()
-          .setFeaturesCol("treatment_features")
+          .setFeaturesCol(treatmentFeaturesColName)
           .setModel(getTreatmentModel)
           .setLabelCol(getTreatmentCol)
           .setExcludedFeatures(Array(getOutcomeCol)),
@@ -169,7 +161,7 @@ class LinearDMLEstimator(override val uid: String)
       )
       case regressor: Regressor[_, _, _] => (
         new TrainRegressor()
-          .setFeaturesCol("treatment_features")
+          .setFeaturesCol(treatmentFeaturesColName)
           .setModel(getTreatmentModel)
           .setLabelCol(getTreatmentCol)
           .setExcludedFeatures(Array(getOutcomeCol)),
@@ -181,7 +173,7 @@ class LinearDMLEstimator(override val uid: String)
     val (outcomeEstimator, outcomeResidualPredictionColName, outcomePredictionColsToDrop) = getOutcomeModel match {
       case classifier: ProbabilisticClassifier[_, _, _] => (
         new TrainClassifier()
-          .setFeaturesCol("outcome_features")
+          .setFeaturesCol(outcomeFeaturesColName)
           .setModel(getOutcomeModel)
           .setLabelCol(getOutcomeCol)
           .setExcludedFeatures(Array(getTreatmentCol)),
@@ -190,7 +182,7 @@ class LinearDMLEstimator(override val uid: String)
       )
       case regressor: Regressor[_, _, _] => (
         new TrainRegressor()
-          .setFeaturesCol("outcome_features")
+          .setFeaturesCol(outcomeFeaturesColName)
           .setModel(getOutcomeModel)
           .setLabelCol(getOutcomeCol)
           .setExcludedFeatures(Array(getTreatmentCol)),
