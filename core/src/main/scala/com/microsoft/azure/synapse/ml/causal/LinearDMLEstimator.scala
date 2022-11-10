@@ -19,6 +19,7 @@ import org.apache.spark.ml.util._
 import org.apache.spark.sql._
 import org.apache.spark.sql.types._
 import org.apache.spark.ml.regression.{GeneralizedLinearRegression, Regressor}
+import shapeless.syntax.std.tuple.productTupleOps
 
 import scala.concurrent.Future
 
@@ -103,8 +104,6 @@ class LinearDMLEstimator(override val uid: String)
         case _ => throw new Exception("The defined outcome model does not support HasLabelCol and HasFeaturesCol.")
       }
 
-      val dmlModel = new LinearDMLModel()
-
       // sampling with replacement to redraw data and get TE value
       // Run it for multiple times in parallel, get a number of TE values,
       // Use average as Ate value, and 2.5% low end, 97.5% high end as Ci value
@@ -112,11 +111,10 @@ class LinearDMLEstimator(override val uid: String)
       log.info(s"Parallelism: $getParallelism")
       val executionContext = getExecutionContextProxy
 
-      val ateFutures = Range(1, getMaxIter+1).toArray.map { index =>
-        Future[Double] {
+      val ateFutures = (1, getMaxIter+1).toArray.map { index =>
+        Future[Option[Double]] {
           log.info(s"Executing ATE calculation on iteration: $index")
-          println(s"Executing ATE calculation on iteration: $index")
-          // sample data with replacement
+          // If the algorithm runs over 1 iteration, do not bootstrap from dataset, otherwise, draw sample with replacement
           val redrewDF =  if (getMaxIter == 1) dataset else dataset.sample(withReplacement = true, fraction = 1)
           redrewDF.cache()
           val ate: Option[Double] =
@@ -125,23 +123,22 @@ class LinearDMLEstimator(override val uid: String)
               val oneAte = totalTime.measure {
                 trainInternal(redrewDF)
               }
-              println(s"Completed ATE calculation on iteration $index and got ATE value: $oneAte, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
+              log.info(s"Completed ATE calculation on iteration $index and got ATE value: $oneAte, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
               Some(oneAte)
             } catch {
               case ex: Throwable =>
-                println(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception ignored.")
-                log.info(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
+                log.warn(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
                 None
             }
           redrewDF.unpersist()
-          ate.getOrElse(0.0)
+          ate
         }(executionContext)
       }
 
-      val ates = awaitFutures(ateFutures).filter(_ != 0.0).sorted
+      val ates = awaitFutures(ateFutures).flatten.sorted
       val finalAte = if (getMaxIter == 1) ates.head else ates.sum / ates.length
       println(s"Completed $getMaxIter iteration ATE calculations and got ${ates.length} values, final ATE = $finalAte")
-      dmlModel.setAtes(ates.toArray).setAte(finalAte)
+      val dmlModel = new LinearDMLModel().setAtes(ates.toArray).setAte(finalAte)
 
       if (ates.length > 1) {
         val ci = Array(percentile[Double](ates, 2.5), percentile[Double](ates, 97.5))
@@ -204,23 +201,22 @@ class LinearDMLEstimator(override val uid: String)
 
     // Note, we perform these steps to get ATE
     /*
-      1. split sample, e.g. 50/50
-      2. use first sample data to fit treatment model and outcome model,
-      3. use two models on the second sample data to get residuals,
-      4. cross fitting to get another residuals,
-      5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
-      5. average treatment effects = (T1 + T2) / 2
+      1. Split sample, e.g. 50/50
+      2. Use the first split to fit the treatment model and the outcome model.
+      3. Use the two models to fit a residual model on the second split.
+      4. Cross-fit by fitting the treatment and outcome models with the second split and the residual model with the first split.
+      5. Average slopes from the two residual models.
     */
     // Step 1 - split sample
     val splits = dataset.randomSplit(getSampleSplitRatio)
     val train = splits(0).cache()
     val test = splits(1).cache()
 
-    // Step 2 - use first sample data to fit treatment model and outcome model
+    // Step 2 - Use the first split to fit the treatment model and the outcome model.
     val treatmentModelV1 = treatmentEstimator.fit(train)
     val outcomeModelV1 = outcomeEstimator.fit(train)
 
-    // Step 3 - use second sample data to get predictions and compute residuals
+    // Step 3 - Use the two models to fit a residual model on the second split.
     val treatmentResidualTransformer =
       new ComputeResidualTransformer()
         .setObservedCol(getTreatmentCol)
@@ -248,7 +244,7 @@ class LinearDMLEstimator(override val uid: String)
         treatmentResidualVA))
     val treatmentEffectDFV1 = treatmentEffectPipelineV1.fit(test).transform(test)
 
-    // Step 4 - cross fitting to get another residuals
+    // Step 4 - Cross-fit by fitting the treatment and outcome models with the second split and the residual model with the first split.
     val treatmentModelV2 = treatmentEstimator.fit(test)
     val outcomeModelV2 = outcomeEstimator.fit(test)
 
@@ -259,18 +255,15 @@ class LinearDMLEstimator(override val uid: String)
         treatmentResidualVA))
     val treatmentEffectDFV2 = treatmentEffectPipelineV2.fit(train).transform(train)
 
-    // Step 5. apply regressor fit to get treatment effect T1 = lrm1.coefficients(0) and T2 = lrm2.coefficients(0)
+    // Step 5. Average slopes from the two residual models.
     val regressor = new GeneralizedLinearRegression()
       .setLabelCol(SchemaConstants.OutcomeResidualColumn)
       .setFeaturesCol("treatmentResidualVec")
       .setFamily("gaussian")
       .setLink("identity")
       .setFitIntercept(false)
-
-      val lrmV1 = regressor.fit(treatmentEffectDFV1)
-      val lrmV2 = regressor.fit(treatmentEffectDFV2)
-
-    // Step 6 - final treatment effects = (T1 + T2) / 2
+    val lrmV1 = regressor.fit(treatmentEffectDFV1)
+    val lrmV2 = regressor.fit(treatmentEffectDFV2)
     val ate = Seq(lrmV1, lrmV2).map(_.coefficients(0)).sum / 2
 
     ate
