@@ -1,9 +1,9 @@
 package com.microsoft.azure.synapse.ml.causal
 
 import com.microsoft.azure.synapse.ml.core.contracts.{HasFeaturesCol, HasWeightCol}
+import com.microsoft.azure.synapse.ml.param.EstimatorParam
 import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClassifier}
 import org.apache.spark.ml.{Estimator, Model}
-import com.microsoft.azure.synapse.ml.param.EstimatorParam
 import org.apache.spark.ml.ParamInjections.HasParallelismInjected
 import org.apache.spark.ml.param.shared.HasMaxIter
 import org.apache.spark.ml.param.{DoubleArrayParam, DoubleParam, Param, Params}
@@ -46,7 +46,7 @@ trait LinearDMLParams extends Params
    * @group setParam
    */
   def setTreatmentModel(value: Estimator[_ <: Model[_]]): this.type = {
-    EnsureSupportedEstimator(value)
+    ensureSupportedEstimator(value)
     set(treatmentModel, value)
   }
 
@@ -59,7 +59,7 @@ trait LinearDMLParams extends Params
    * @group setParam
    */
   def setOutcomeModel(value: Estimator[_ <: Model[_]]): this.type = {
-    EnsureSupportedEstimator(value)
+    ensureSupportedEstimator(value)
     set(outcomeModel, value)
   }
 
@@ -78,6 +78,23 @@ trait LinearDMLParams extends Params
    */
   def setSampleSplitRatio(value: Array[Double]): this.type = set(sampleSplitRatio, value)
 
+  val confidenceLevel = new DoubleParam(
+    this,
+    "confidenceLevel",
+    "confidence level, default value is 0.975",
+    value => value > 0 && value < 1)
+
+  def getConfidenceLevel: Double = $(confidenceLevel)
+
+  /**
+   * Set the higher bound percentile of ATE distribution. Default is 0.975.
+   * lower bound value will be automatically calculated as 100*(1-confidenceLevel)
+   * That means by default we compute 95% confidence interval, it is [2.5%, 97.5%] percentile of ATE distribution
+   *
+   * @group setParam
+   */
+  def setConfidenceLevel(value: Double): this.type = set(confidenceLevel, value)
+
   /**
    * Set the maximum number of confidence interval bootstrapping iterations.
    * Default is 1, which means it does not calculate confidence interval.
@@ -93,18 +110,19 @@ trait LinearDMLParams extends Params
     treatmentModel -> new LogisticRegression(),
     outcomeModel -> new LogisticRegression(),
     sampleSplitRatio -> Array(0.5, 0.5),
+    confidenceLevel -> 0.975,
     maxIter -> 1,
     parallelism -> 10 // Best practice, a value up to 10 should be sufficient for most clusters.
   )
 
-  private def EnsureSupportedEstimator(value: Estimator[_ <: Model[_]]): Unit = {
-    val isSupportedModel = value match {
-      case regressor: Regressor[_, _, _] => true // for continuous treatment
-      case classifier: ProbabilisticClassifier[_, _, _] => true
-      case _ => false
-    }
-    if (!isSupportedModel) {
-      throw new Exception("LinearDML only support regressor and ProbabilisticClassifier as treatment or outcome model")
+  private def ensureSupportedEstimator(value: Estimator[_ <: Model[_]]): Unit = {
+    value match {
+      case _: Regressor[_, _, _] => // for continuous treatment or outcome
+      case _: ProbabilisticClassifier[_, _, _] =>
+      case _ => throw new Exception(
+        s"LinearDML only support Regressor and ProbabilisticClassifier as treatment or outcome model types, " +
+          s"but got type ${value.getClass.getName}"
+      )
     }
   }
 }

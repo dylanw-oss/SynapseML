@@ -4,23 +4,22 @@
 package com.microsoft.azure.synapse.ml.causal
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
-import com.microsoft.azure.synapse.ml.train._
+import com.microsoft.azure.synapse.ml.train.{TrainClassifier, TrainRegressor}
 import com.microsoft.azure.synapse.ml.core.schema.{DatasetExtensions, SchemaConstants}
 import com.microsoft.azure.synapse.ml.core.utils.StopWatch
 import com.microsoft.azure.synapse.ml.logging.BasicLogging
 import com.microsoft.azure.synapse.ml.stages.DropColumns
 import org.apache.commons.math3.stat.descriptive.rank.Percentile
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.ml._
-import org.apache.spark.ml.classification._
-import org.apache.spark.ml.feature.VectorAssembler
-import org.apache.spark.ml.param._
-import org.apache.spark.ml.param.shared.{HasFeaturesCol, HasLabelCol, HasWeightCol}
-import org.apache.spark.ml.util._
-import org.apache.spark.sql._
-import org.apache.spark.sql.types._
+import org.apache.spark.ml.{ComplexParamsReadable, ComplexParamsWritable, Estimator, Model, Pipeline}
+import org.apache.spark.ml.classification.ProbabilisticClassifier
 import org.apache.spark.ml.regression.{GeneralizedLinearRegression, Regressor}
-
+import org.apache.spark.ml.feature.VectorAssembler
+import org.apache.spark.ml.param.{DoubleArrayParam, ParamMap}
+import org.apache.spark.ml.param.shared.HasWeightCol
+import org.apache.spark.ml.util.Identifiable
+import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.types.StructType
 import scala.concurrent.Future
 
 /** Linear Double ML estimators. The estimator follows the two stage process,
@@ -124,8 +123,7 @@ class LinearDMLEstimator(override val uid: String)
       }
 
       val ates = awaitFutures(ateFutures).flatten
-      println(s"Completed $getMaxIter iteration ATE calculations and got ${ates.length} values.")
-      val dmlModel = new LinearDMLModel().setAtes(ates.toArray)
+      val dmlModel = this.copyValues(new LinearDMLModel(uid)).setAtes(ates.toArray)
       dmlModel
     })
   }
@@ -240,7 +238,7 @@ object LinearDMLEstimator extends ComplexParamsReadable[LinearDMLEstimator] {
 
 /** Model produced by [[LinearDMLEstimator]]. */
 class LinearDMLModel(val uid: String)
-  extends Model[LinearDMLModel] with ComplexParamsWritable with Wrappable with BasicLogging {
+  extends Model[LinearDMLModel] with LinearDMLParams with ComplexParamsWritable with Wrappable with BasicLogging {
   logClass()
 
   def this() = this(Identifiable.randomUID("LinearDMLModel"))
@@ -260,23 +258,6 @@ class LinearDMLModel(val uid: String)
     Array(ciLowerBound, ciUpperBound)
   }
 
-  val confidenceLevel = new DoubleParam(
-    this,
-    "confidenceLevel",
-    "confidence interval higher bound percentile, default is 0.975",
-    value => value > 0 && value < 1)
-
-  def getConfidenceLevel: Double = $(confidenceLevel)
-
-  /**
-   * Set the higher bound percentile of ATE distribution. Default is 0.975.
-   * lower bound value will be automatically calculated as 100*(1-confidenceLevel)
-   * That means by default we compute 95% confidence interval, it is [2.5%, 97.5%] percentile of ATE distribution
-   *
-   * @group setParam
-   */
-  def setConfidenceLevel(value: Double): this.type = set(confidenceLevel, value)
-
   private def percentile(values: Seq[Double], quantile: Double): Double = {
     val sortedValues = values.sorted
     val percentile = new Percentile()
@@ -287,14 +268,12 @@ class LinearDMLModel(val uid: String)
   override def copy(extra: ParamMap): LinearDMLModel = defaultCopy(extra)
 
   //scalastyle:off
-  /** LinearDMLEstimator transform does nothing and isn't supposed be called by end user. */
+  /** LinearDMLEstimator transform does nothing by design and isn't supposed to be called by end user. */
   override def transform(dataset: Dataset[_]): DataFrame = {
     logTransform[DataFrame]({
       dataset.toDF()
     })
   }
-
-  setDefault(confidenceLevel -> 0.975)
 
   @DeveloperApi
   override def transformSchema(schema: StructType): StructType =

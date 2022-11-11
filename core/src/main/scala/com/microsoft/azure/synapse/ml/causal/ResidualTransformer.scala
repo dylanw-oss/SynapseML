@@ -3,12 +3,13 @@ package com.microsoft.azure.synapse.ml.causal
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.logging.BasicLogging
 import org.apache.spark.ml.Transformer
-import org.apache.spark.ml.linalg.{SQLDataTypes, Vector}
-import org.apache.spark.ml.param._
+import org.apache.spark.ml.functions.vector_to_array
+import org.apache.spark.ml.linalg.SQLDataTypes
+import org.apache.spark.ml.param.{IntParam, Param, ParamMap, ParamValidators}
 import org.apache.spark.ml.util.{DefaultParamsReadable, DefaultParamsWritable, Identifiable}
-import org.apache.spark.sql.functions.{col, udf}
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.{DoubleType, IntegerType, NumericType, StructField, StructType}
 import org.apache.spark.sql.{DataFrame, Dataset}
-import org.apache.spark.sql.types._
 
 /** Compute the differences between observed and predicted values of data.
  *  for classification, we compute residual as "observed - probability($(classIndex))"
@@ -55,26 +56,24 @@ class ResidualTransformer(override val uid: String) extends Transformer
       transformSchema(schema = dataset.schema, logging = true)
       // Make sure the observedCol is a DoubleType
       val observedColType = dataset.schema(getObservedCol).dataType
-      require(observedColType == DoubleType || observedColType == IntegerType, s"observedCol must be of type DoubleType but got $observedColType")
+      require(observedColType == DoubleType || observedColType == IntegerType, s"observedCol must be of type DoubleType or IntegerType but got $observedColType")
 
-      val inputType = dataset.schema(getPredictedCol).dataType
-      if (inputType == SQLDataTypes.VectorType) {
-        // For vector input, we compute the residual as "observed - probability($index)"
-        val extractionUdf = (index: Int) => udf { (observed: Double, prediction: Vector) =>
-          observed - prediction(index) // TO-DO: Validate $(probabilityIndex) >= probability size
-        }
-        dataset.withColumn(getOutcomeCol, extractionUdf(getClassIndex)(col(getObservedCol), col(getPredictedCol)))
-      } else if (inputType.isInstanceOf[NumericType]) {
-        // For numeric input, we compute residual as "observed - predicted"
-        dataset.withColumn(
-          getOutcomeCol,
-          col(getObservedCol) - col(getPredictedCol)
-        )
-      } else {
-        throw new IllegalArgumentException(
-          s"Prediction column $getPredictedCol must be of type Vector or NumericType, but is $inputType" +
-            s", please use 'setPredictedCol' to set the correct predicted column"
-        )
+      val predictedColDataType = dataset.schema(getPredictedCol).dataType
+      predictedColDataType match {
+        case SQLDataTypes.VectorType =>
+          // For probability vector, compute the residual as "observed - probability($index)"
+          dataset.withColumn(getOutcomeCol,
+            col(getObservedCol) - vector_to_array(col(getPredictedCol))(getClassIndex)
+          )
+        case _: NumericType =>
+          // For prediction numeric, compute residual as "observed - prediction"
+          dataset.withColumn(getOutcomeCol,
+            col(getObservedCol) - col(getPredictedCol)
+          )
+        case _ =>
+          throw new IllegalArgumentException(
+            s"Prediction column $getPredictedCol must be of type Vector or NumericType, but is $predictedColDataType" +
+              s", please use 'setPredictedCol' to set the correct prediction column")
       }
     })
   }
