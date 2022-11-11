@@ -131,50 +131,67 @@ class LinearDMLEstimator(override val uid: String)
   }
 
   private def trainInternal(dataset: Dataset[_]): Double = {
-    // setup estimators
     val treatmentFeaturesColName = DatasetExtensions.findUnusedColumnName("treatment_features", dataset)
     val outcomeFeaturesColName = DatasetExtensions.findUnusedColumnName("outcome_features", dataset)
+    val treatmentResidualVecCol = DatasetExtensions.findUnusedColumnName("treatmentResidualVec", dataset)
 
-    val (treatmentEstimator, treatmentResidualPredictionColName, treatmentPredictionColsToDrop) = getTreatmentModel match {
-      case classifier: ProbabilisticClassifier[_, _, _] => (
-        new TrainClassifier()
-          .setFeaturesCol(treatmentFeaturesColName)
-          .setModel(getTreatmentModel)
-          .setLabelCol(getTreatmentCol)
-          .setExcludedFeatures(Array(getOutcomeCol)),
-        classifier.getProbabilityCol,
-        Seq(classifier.getPredictionCol, classifier.getProbabilityCol, classifier.getRawPredictionCol)
-      )
-      case regressor: Regressor[_, _, _] => (
-        new TrainRegressor()
-          .setFeaturesCol(treatmentFeaturesColName)
-          .setModel(getTreatmentModel)
-          .setLabelCol(getTreatmentCol)
-          .setExcludedFeatures(Array(getOutcomeCol)),
-        regressor.getPredictionCol,
-        Seq(regressor.getPredictionCol)
-      )
+    def getModel(model: Estimator[_ <: Model[_]], labelColName: String, featuresColName: String, excludedFeatures: Array[String]) = {
+      model match {
+        case classifier: ProbabilisticClassifier[_, _, _] => (
+          new TrainClassifier()
+            .setModel(model)
+            .setLabelCol(labelColName)
+            .setFeaturesCol(featuresColName)
+            .setExcludedFeatures(excludedFeatures),
+          classifier.getProbabilityCol,
+          Seq(classifier.getPredictionCol, classifier.getProbabilityCol, classifier.getRawPredictionCol)
+        )
+        case regressor: Regressor[_, _, _] => (
+          new TrainRegressor()
+            .setModel(model)
+            .setLabelCol(labelColName)
+            .setFeaturesCol(featuresColName)
+            .setExcludedFeatures(excludedFeatures),
+          regressor.getPredictionCol,
+          Seq(regressor.getPredictionCol)
+        )
+      }
     }
 
-    val (outcomeEstimator, outcomeResidualPredictionColName, outcomePredictionColsToDrop) = getOutcomeModel match {
-      case classifier: ProbabilisticClassifier[_, _, _] => (
-        new TrainClassifier()
-          .setFeaturesCol(outcomeFeaturesColName)
-          .setModel(getOutcomeModel)
-          .setLabelCol(getOutcomeCol)
-          .setExcludedFeatures(Array(getTreatmentCol)),
-        classifier.getProbabilityCol,
-        Seq(classifier.getPredictionCol, classifier.getProbabilityCol, classifier.getRawPredictionCol)
-      )
-      case regressor: Regressor[_, _, _] => (
-        new TrainRegressor()
-          .setFeaturesCol(outcomeFeaturesColName)
-          .setModel(getOutcomeModel)
-          .setLabelCol(getOutcomeCol)
-          .setExcludedFeatures(Array(getTreatmentCol)),
-        regressor.getPredictionCol,
-        Seq(regressor.getPredictionCol)
-      )
+    val (treatmentEstimator, treatmentResidualPredictionColName, treatmentPredictionColsToDrop) = getModel(
+      getTreatmentModel, getTreatmentCol, treatmentFeaturesColName, Array(getOutcomeCol)
+    )
+    val (outcomeEstimator, outcomeResidualPredictionColName, outcomePredictionColsToDrop) = getModel(
+      getOutcomeModel, getOutcomeCol, outcomeFeaturesColName, Array(getTreatmentCol)
+    )
+
+    def setUpDMLPipeline(train: Dataset[_], test: Dataset[_]): DataFrame = {
+      val treatmentModel = treatmentEstimator.fit(train)
+      val outcomeModel = outcomeEstimator.fit(train)
+
+      val treatmentResidual =
+        new ResidualTransformer()
+          .setObservedCol(getTreatmentCol)
+          .setPredictedCol(treatmentResidualPredictionColName)
+          .setOutcomeCol(SchemaConstants.TreatmentResidualColumn)
+      val dropTreatmentPredictedColumns = new DropColumns().setCols(treatmentPredictionColsToDrop.toArray)
+      val outcomeResidual =
+        new ResidualTransformer()
+          .setObservedCol(getOutcomeCol)
+          .setPredictedCol(outcomeResidualPredictionColName)
+          .setOutcomeCol(SchemaConstants.OutcomeResidualColumn)
+      val dropOutcomePredictedColumns = new DropColumns().setCols(outcomePredictionColsToDrop.toArray)
+      val treatmentResidualVA =
+        new VectorAssembler()
+          .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
+          .setOutputCol(treatmentResidualVecCol)
+          .setHandleInvalid("skip")
+      val pipeline = new Pipeline().setStages(Array(
+        treatmentModel, treatmentResidual, dropTreatmentPredictedColumns,
+        outcomeModel, outcomeResidual, dropOutcomePredictedColumns,
+        treatmentResidualVA))
+
+      pipeline.fit(test).transform(test)
     }
 
     // Note, we perform these steps to get ATE
@@ -185,55 +202,13 @@ class LinearDMLEstimator(override val uid: String)
       4. Cross-fit by fitting the treatment and outcome models with the second split and the residual model with the first split.
       5. Average slopes from the two residual models.
     */
-    // Step 1 - split sample
     val splits = dataset.randomSplit(getSampleSplitRatio)
     val train = splits(0).cache()
     val test = splits(1).cache()
+    val treatmentEffectDFV1 = setUpDMLPipeline(train, test)
+    val treatmentEffectDFV2 = setUpDMLPipeline(test, train)
 
-    // Step 2 - Use the first split to fit the treatment model and the outcome model.
-    val treatmentModelV1 = treatmentEstimator.fit(train)
-    val outcomeModelV1 = outcomeEstimator.fit(train)
-
-    // Step 3 - Use the two models to fit a residual model on the second split.
-    val treatmentResidualTransformer =
-      new ResidualTransformer()
-        .setObservedCol(getTreatmentCol)
-        .setPredictedCol(treatmentResidualPredictionColName)
-        .setOutcomeCol(SchemaConstants.TreatmentResidualColumn)
-    val dropTreatmentPredictedColumnsTransformer = new DropColumns().setCols(treatmentPredictionColsToDrop.toArray)
-
-    val outcomeResidualTransformer =
-      new ResidualTransformer()
-        .setObservedCol(getOutcomeCol)
-        .setPredictedCol(outcomeResidualPredictionColName)
-        .setOutcomeCol(SchemaConstants.OutcomeResidualColumn)
-    val dropOutcomePredictedColumnsTransformer = new DropColumns().setCols(outcomePredictionColsToDrop.toArray)
-
-    val treatmentResidualVA =
-      new VectorAssembler()
-        .setInputCols(Array(SchemaConstants.TreatmentResidualColumn))
-        .setOutputCol("treatmentResidualVec")
-        .setHandleInvalid("skip")
-
-    val treatmentEffectPipelineV1 =
-      new Pipeline().setStages(Array(
-        treatmentModelV1, treatmentResidualTransformer, dropTreatmentPredictedColumnsTransformer,
-        outcomeModelV1, outcomeResidualTransformer, dropOutcomePredictedColumnsTransformer,
-        treatmentResidualVA))
-    val treatmentEffectDFV1 = treatmentEffectPipelineV1.fit(test).transform(test)
-
-    // Step 4 - Cross-fit by fitting the treatment and outcome models with the second split and the residual model with the first split.
-    val treatmentModelV2 = treatmentEstimator.fit(test)
-    val outcomeModelV2 = outcomeEstimator.fit(test)
-
-    val treatmentEffectPipelineV2 =
-      new Pipeline().setStages(Array(
-        treatmentModelV2, treatmentResidualTransformer, dropTreatmentPredictedColumnsTransformer,
-        outcomeModelV2, outcomeResidualTransformer, dropOutcomePredictedColumnsTransformer,
-        treatmentResidualVA))
-    val treatmentEffectDFV2 = treatmentEffectPipelineV2.fit(train).transform(train)
-
-    // Step 5. Average slopes from the two residual models.
+    // Average slopes from the two residual models.
     val regressor = new GeneralizedLinearRegression()
       .setLabelCol(SchemaConstants.OutcomeResidualColumn)
       .setFeaturesCol("treatmentResidualVec")
@@ -243,7 +218,6 @@ class LinearDMLEstimator(override val uid: String)
     val lrmV1 = regressor.fit(treatmentEffectDFV1)
     val lrmV2 = regressor.fit(treatmentEffectDFV2)
     val ate = Seq(lrmV1, lrmV2).map(_.coefficients(0)).sum / 2
-
     ate
   }
 
