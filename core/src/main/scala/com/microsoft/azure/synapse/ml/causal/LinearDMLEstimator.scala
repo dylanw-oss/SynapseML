@@ -76,6 +76,7 @@ class LinearDMLEstimator(override val uid: String)
    */
   override def fit(dataset: Dataset[_]): LinearDMLModel = {
     logFit({
+      require(getMaxIter > 0, "maxIter should be larger than 0!")
       if (get(weightCol).isDefined) {
         getTreatmentModel match {
           case w: HasWeightCol => w.set(w.weightCol, getWeightCol)
@@ -103,7 +104,6 @@ class LinearDMLEstimator(override val uid: String)
           log.info(s"Executing ATE calculation on iteration: $index")
           // If the algorithm runs over 1 iteration, do not bootstrap from dataset, otherwise, draw sample with replacement
           val redrewDF =  if (getMaxIter == 1) dataset else dataset.sample(withReplacement = true, fraction = 1)
-          redrewDF.cache()
           val ate: Option[Double] =
             try {
               val totalTime = new StopWatch
@@ -117,7 +117,6 @@ class LinearDMLEstimator(override val uid: String)
                 log.warn(s"ATE calculation got exception on iteration $index with the redrew sample data. Exception details: $ex")
                 None
             }
-          redrewDF.unpersist()
           ate
         }(executionContext)
       }
@@ -129,17 +128,13 @@ class LinearDMLEstimator(override val uid: String)
   }
 
   private def trainInternal(dataset: Dataset[_]): Double = {
-    val treatmentFeaturesColName = DatasetExtensions.findUnusedColumnName("treatment_features", dataset)
-    val outcomeFeaturesColName = DatasetExtensions.findUnusedColumnName("outcome_features", dataset)
-    val treatmentResidualVecCol = DatasetExtensions.findUnusedColumnName("treatmentResidualVec", dataset)
 
-    def getModel(model: Estimator[_ <: Model[_]], labelColName: String, featuresColName: String, excludedFeatures: Array[String]) = {
+    def getModel(model: Estimator[_ <: Model[_]], labelColName: String, excludedFeatures: Array[String]) = {
       model match {
         case classifier: ProbabilisticClassifier[_, _, _] => (
           new TrainClassifier()
             .setModel(model)
             .setLabelCol(labelColName)
-            .setFeaturesCol(featuresColName)
             .setExcludedFeatures(excludedFeatures),
           classifier.getProbabilityCol,
           Seq(classifier.getPredictionCol, classifier.getProbabilityCol, classifier.getRawPredictionCol)
@@ -148,7 +143,6 @@ class LinearDMLEstimator(override val uid: String)
           new TrainRegressor()
             .setModel(model)
             .setLabelCol(labelColName)
-            .setFeaturesCol(featuresColName)
             .setExcludedFeatures(excludedFeatures),
           regressor.getPredictionCol,
           Seq(regressor.getPredictionCol)
@@ -157,11 +151,13 @@ class LinearDMLEstimator(override val uid: String)
     }
 
     val (treatmentEstimator, treatmentResidualPredictionColName, treatmentPredictionColsToDrop) = getModel(
-      getTreatmentModel, getTreatmentCol, treatmentFeaturesColName, Array(getOutcomeCol)
+      getTreatmentModel.copy(getTreatmentModel.extractParamMap()), getTreatmentCol, Array(getOutcomeCol)
     )
     val (outcomeEstimator, outcomeResidualPredictionColName, outcomePredictionColsToDrop) = getModel(
-      getOutcomeModel, getOutcomeCol, outcomeFeaturesColName, Array(getTreatmentCol)
+      getOutcomeModel.copy(getOutcomeModel.extractParamMap()), getOutcomeCol, Array(getTreatmentCol)
     )
+
+    val treatmentResidualVecCol = DatasetExtensions.findUnusedColumnName("treatmentResidualVec", dataset)
 
     def setUpDMLPipeline(train: Dataset[_], test: Dataset[_]): DataFrame = {
       val treatmentModel = treatmentEstimator.fit(train)
@@ -201,20 +197,20 @@ class LinearDMLEstimator(override val uid: String)
       5. Average slopes from the two residual models.
     */
     val splits = dataset.randomSplit(getSampleSplitRatio)
-    val train = splits(0).cache()
-    val test = splits(1).cache()
+    val (train, test) = (splits(0).cache, splits(1).cache)
     val treatmentEffectDFV1 = setUpDMLPipeline(train, test)
     val treatmentEffectDFV2 = setUpDMLPipeline(test, train)
 
     // Average slopes from the two residual models.
     val regressor = new GeneralizedLinearRegression()
       .setLabelCol(SchemaConstants.OutcomeResidualColumn)
-      .setFeaturesCol("treatmentResidualVec")
+      .setFeaturesCol(treatmentResidualVecCol)
       .setFamily("gaussian")
       .setLink("identity")
       .setFitIntercept(false)
-    val lrmV1 = regressor.fit(treatmentEffectDFV1)
-    val lrmV2 = regressor.fit(treatmentEffectDFV2)
+    val (lrmV1, lrmV2) = (regressor.fit(treatmentEffectDFV1), regressor.fit(treatmentEffectDFV2))
+    Seq(train, test).foreach(_.unpersist)
+
     val ate = Seq(lrmV1, lrmV2).map(_.coefficients(0)).sum / 2
     ate
   }
