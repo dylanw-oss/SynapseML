@@ -3,11 +3,7 @@ import TabItem from '@theme/TabItem';
 import DocTable from "@theme/DocumentationTable";
 
 
-
-
-## Causal
-
-### LinearDMLEstimator
+## LinearDMLEstimator
 
 <Tabs
 defaultValue="py"
@@ -44,7 +40,7 @@ dml = (LinearDMLEstimator()
       .setTreatmentModel(LogisticRegression())
       .setOutcomeCol("Outcome")
       .setOutcomeModel(LogisticRegression())
-      .setCiCalcIterations(100))
+      .setMaxIter(100))
 
 dmlModel = dml.fit(df)
 dmlModel.getAte()
@@ -78,7 +74,7 @@ val dml = (new LinearDMLEstimator()
   .setTreatmentModel(new LogisticRegression())
   .setOutcomeCol("Outcome")
   .setOutcomeModel(new LogisticRegression())
-  .setCiCalcIterations(100))
+  .setMaxIter(100))
 
 val dmlModel = dml.fit(df)
 dmlModel.getAte

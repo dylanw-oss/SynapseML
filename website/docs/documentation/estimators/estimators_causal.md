@@ -4,7 +4,7 @@ sidebar_label: Causel Inference
 hide_title: true
 ---
 
-# LinearDMLEstimator
+# Causal Inference
 
 import LinearDMLEstimator, {toc as LinearDMLEstimatorTOC} from './causal/_causalInferenceDML.md';
 
