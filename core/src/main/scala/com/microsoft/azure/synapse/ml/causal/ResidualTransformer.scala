@@ -14,7 +14,7 @@ import org.apache.spark.sql.types._
  *  for classification, we compute residual as "observed - probability($(classIndex))"
  *  for regression, we compute residual as "observed - prediction"
  */
-class ComputeResidualTransformer(override val uid: String) extends Transformer
+class ResidualTransformer(override val uid: String) extends Transformer
   with HasOutcomeCol with DefaultParamsWritable with Wrappable with BasicLogging {
 
   logClass()
@@ -37,7 +37,7 @@ class ComputeResidualTransformer(override val uid: String) extends Transformer
       ParamValidators.gtEq(0))
   def setClassIndex(value: Int): this.type = set(param = classIndex, value = value)
   final def getClassIndex: Int = getOrDefault(classIndex)
-  override def copy(extra: ParamMap): ComputeResidualTransformer = defaultCopy(extra)
+  override def copy(extra: ParamMap): ResidualTransformer = defaultCopy(extra)
 
   override def transformSchema(schema: StructType): StructType =
     StructType(
@@ -80,4 +80,4 @@ class ComputeResidualTransformer(override val uid: String) extends Transformer
   }
 }
 
-object ComputeResidualTransformer extends DefaultParamsReadable[ComputeResidualTransformer]
+object ResidualTransformer extends DefaultParamsReadable[ResidualTransformer]

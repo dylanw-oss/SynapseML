@@ -99,7 +99,7 @@ class LinearDMLEstimator(override val uid: String)
       log.info(s"Parallelism: $getParallelism")
       val executionContext = getExecutionContextProxy
 
-      val ateFutures = Range(1, getMaxIter+1).toArray.map { index =>
+      val ateFutures =(1 to getMaxIter).toArray.map { index =>
         Future[Option[Double]] {
           log.info(s"Executing ATE calculation on iteration: $index")
           // If the algorithm runs over 1 iteration, do not bootstrap from dataset, otherwise, draw sample with replacement
@@ -124,9 +124,8 @@ class LinearDMLEstimator(override val uid: String)
       }
 
       val ates = awaitFutures(ateFutures).flatten
-      val finalAte = if (getMaxIter == 1) ates.head else ates.sum / ates.length
-      println(s"Completed $getMaxIter iteration ATE calculations and got ${ates.length} values, final ATE = $finalAte")
-      val dmlModel = new LinearDMLModel().setAtes(ates.toArray).setAte(finalAte)
+      println(s"Completed $getMaxIter iteration ATE calculations and got ${ates.length} values.")
+      val dmlModel = new LinearDMLModel().setAtes(ates.toArray)
       dmlModel
     })
   }
@@ -197,14 +196,14 @@ class LinearDMLEstimator(override val uid: String)
 
     // Step 3 - Use the two models to fit a residual model on the second split.
     val treatmentResidualTransformer =
-      new ComputeResidualTransformer()
+      new ResidualTransformer()
         .setObservedCol(getTreatmentCol)
         .setPredictedCol(treatmentResidualPredictionColName)
         .setOutcomeCol(SchemaConstants.TreatmentResidualColumn)
     val dropTreatmentPredictedColumnsTransformer = new DropColumns().setCols(treatmentPredictionColsToDrop.toArray)
 
     val outcomeResidualTransformer =
-      new ComputeResidualTransformer()
+      new ResidualTransformer()
         .setObservedCol(getOutcomeCol)
         .setPredictedCol(outcomeResidualPredictionColName)
         .setOutcomeCol(SchemaConstants.OutcomeResidualColumn)
@@ -272,36 +271,37 @@ class LinearDMLModel(val uid: String)
 
   def this() = this(Identifiable.randomUID("LinearDMLModel"))
 
-  val ate = new DoubleParam(this, "ate", "average treatment effect")
-  def getAte: Double = $(ate)
-  def setAte(v: Double): this.type = set(ate, v)
-
   var ates = new DoubleArrayParam(this, "ates", "treatment effect results for each iteration")
   def getAtes: Array[Double] = $(ates)
   def setAtes(v: Array[Double]): this.type = set(ates, v)
 
+  def getAte: Double = {
+    val finalAte =  $(ates).sum / $(ates).length
+    finalAte
+  }
+
   def getCi: Array[Double] = {
-    val ciLowerBound = percentile($(ates), getPercentileLowerBound)
-    val ciUpperBound = percentile($(ates), 100-getPercentileLowerBound)
+    val ciLowerBound = percentile($(ates), 100 * (1 - getConfidenceLevel))
+    val ciUpperBound = percentile($(ates), getConfidenceLevel * 100)
     Array(ciLowerBound, ciUpperBound)
   }
 
-  val percentileLowerBound = new DoubleParam(
+  val confidenceLevel = new DoubleParam(
     this,
-    "percentileLowerBound",
-    "percentile lower bound value, e.g. 2.5 means get 2.5% percentile",
-    value => value > 0 && value < 100)
+    "confidenceLevel",
+    "confidence interval higher bound percentile, default is 0.975",
+    value => value > 0 && value < 1)
 
-  def getPercentileLowerBound: Double = $(percentileLowerBound)
+  def getConfidenceLevel: Double = $(confidenceLevel)
 
   /**
-   * Set the lower bound value for percentile of ATE distribution. Default is 2.5.
-   * higher bound value will be automatically calculated as (100-percentileLowCutOff)
-   * That means by default we compute 95% confidence interval, it is [2.5, 97.5] percentile of ATE distribution
+   * Set the higher bound percentile of ATE distribution. Default is 0.975.
+   * lower bound value will be automatically calculated as 100*(1-confidenceLevel)
+   * That means by default we compute 95% confidence interval, it is [2.5%, 97.5%] percentile of ATE distribution
    *
    * @group setParam
    */
-  def setPercentileLowerBound(value: Double): this.type = set(percentileLowerBound, value)
+  def setConfidenceLevel(value: Double): this.type = set(confidenceLevel, value)
 
   private def percentile(values: Seq[Double], quantile: Double): Double = {
     val sortedValues = values.sorted
@@ -320,7 +320,7 @@ class LinearDMLModel(val uid: String)
     })
   }
 
-  setDefault(percentileLowerBound -> 2.5)
+  setDefault(confidenceLevel -> 0.975)
 
   @DeveloperApi
   override def transformSchema(schema: StructType): StructType =

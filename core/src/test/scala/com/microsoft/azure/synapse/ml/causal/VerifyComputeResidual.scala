@@ -3,7 +3,7 @@ package com.microsoft.azure.synapse.ml.causal
 import com.microsoft.azure.synapse.ml.core.test.fuzzing.{TestObject, TransformerFuzzing}
 import org.apache.spark.ml.util.MLReadable
 
-class VerifyComputeResidual extends TransformerFuzzing[ComputeResidualTransformer] {
+class VerifyComputeResidual extends TransformerFuzzing[ResidualTransformer] {
 
   private lazy val mockDataset = spark.createDataFrame(Seq(
     (2d, 0.50d, true, 0, 0.toByte, 12F),
@@ -37,7 +37,7 @@ class VerifyComputeResidual extends TransformerFuzzing[ComputeResidualTransforme
 
 
   test("Compute residual") {
-    val computeResiduals = new ComputeResidualTransformer()
+    val computeResiduals = new ResidualTransformer()
       .setObservedCol("label")
       .setPredictedCol("prediction")
       .setOutcomeCol("diff")
@@ -47,8 +47,8 @@ class VerifyComputeResidual extends TransformerFuzzing[ComputeResidualTransforme
     assert(verifyResult(expectedDF, processedDF))
   }
 
-  override def testObjects(): Seq[TestObject[ComputeResidualTransformer]] = Seq(new TestObject(
-    new ComputeResidualTransformer(), mockDataset))
+  override def testObjects(): Seq[TestObject[ResidualTransformer]] = Seq(new TestObject(
+    new ResidualTransformer(), mockDataset))
 
-  override def reader: MLReadable[_] = ComputeResidualTransformer
+  override def reader: MLReadable[_] = ResidualTransformer
 }
