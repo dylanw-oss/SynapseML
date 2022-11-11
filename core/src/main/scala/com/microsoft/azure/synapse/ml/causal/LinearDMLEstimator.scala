@@ -111,7 +111,7 @@ class LinearDMLEstimator(override val uid: String)
               val oneAte = totalTime.measure {
                 trainInternal(redrewDF)
               }
-              println(s"Completed ATE calculation on iteration $index and got ATE value: $oneAte, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
+              log.info(s"Completed ATE calculation on iteration $index and got ATE value: $oneAte, time elapsed: ${totalTime.elapsed() / 60000000000.0} minutes")
               Some(oneAte)
             } catch {
               case ex: Throwable =>
@@ -123,28 +123,13 @@ class LinearDMLEstimator(override val uid: String)
         }(executionContext)
       }
 
-      val ates = awaitFutures(ateFutures).flatten.sorted
-      println(ates)
+      val ates = awaitFutures(ateFutures).flatten
       val finalAte = if (getMaxIter == 1) ates.head else ates.sum / ates.length
       println(s"Completed $getMaxIter iteration ATE calculations and got ${ates.length} values, final ATE = $finalAte")
       val dmlModel = new LinearDMLModel().setAtes(ates.toArray).setAte(finalAte)
-
-      if (ates.length > 1) {
-        val ci = Array(percentile(ates, getPercentileLowCutOff), percentile(ates, 100-getPercentileLowCutOff))
-        dmlModel.setCi(ci)
-      }
-
       dmlModel
     })
   }
-
-  private def percentile(values: Seq[Double], quantile: Double): Double = {
-    val sortedValues = values.sorted
-    val percentile = new Percentile()
-    percentile.setData(sortedValues.toArray)
-    percentile.evaluate(quantile)
-  }
-
 
   private def trainInternal(dataset: Dataset[_]): Double = {
     // setup estimators
@@ -295,9 +280,35 @@ class LinearDMLModel(val uid: String)
   def getAtes: Array[Double] = $(ates)
   def setAtes(v: Array[Double]): this.type = set(ates, v)
 
-  var ci = new DoubleArrayParam(this, "ci", "treatment effect's confidence interval")
-  def getCi: Array[Double] = $(ci)
-  def setCi(v: Array[Double]): this.type = set(ci, v)
+  def getCi: Array[Double] = {
+    val ciLowerBound = percentile($(ates), getPercentileLowerBound)
+    val ciUpperBound = percentile($(ates), 100-getPercentileLowerBound)
+    Array(ciLowerBound, ciUpperBound)
+  }
+
+  val percentileLowerBound = new DoubleParam(
+    this,
+    "percentileLowerBound",
+    "percentile lower bound value, e.g. 2.5 means get 2.5% percentile",
+    value => value > 0 && value < 100)
+
+  def getPercentileLowerBound: Double = $(percentileLowerBound)
+
+  /**
+   * Set the lower bound value for percentile of ATE distribution. Default is 2.5.
+   * higher bound value will be automatically calculated as (100-percentileLowCutOff)
+   * That means by default we compute 95% confidence interval, it is [2.5, 97.5] percentile of ATE distribution
+   *
+   * @group setParam
+   */
+  def setPercentileLowerBound(value: Double): this.type = set(percentileLowerBound, value)
+
+  private def percentile(values: Seq[Double], quantile: Double): Double = {
+    val sortedValues = values.sorted
+    val percentile = new Percentile()
+    percentile.setData(sortedValues.toArray)
+    percentile.evaluate(quantile)
+  }
 
   override def copy(extra: ParamMap): LinearDMLModel = defaultCopy(extra)
 
@@ -308,6 +319,8 @@ class LinearDMLModel(val uid: String)
       dataset.toDF()
     })
   }
+
+  setDefault(percentileLowerBound -> 2.5)
 
   @DeveloperApi
   override def transformSchema(schema: StructType): StructType =
