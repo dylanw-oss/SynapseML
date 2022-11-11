@@ -6,7 +6,7 @@ import org.apache.spark.ml.{Estimator, Model}
 import com.microsoft.azure.synapse.ml.param.EstimatorParam
 import org.apache.spark.ml.ParamInjections.HasParallelismInjected
 import org.apache.spark.ml.param.shared.HasMaxIter
-import org.apache.spark.ml.param.{DoubleArrayParam, Param, Params}
+import org.apache.spark.ml.param.{DoubleArrayParam, DoubleParam, Param, Params}
 import org.apache.spark.ml.regression.Regressor
 
 trait HasTreatmentCol extends Params {
@@ -78,6 +78,20 @@ trait LinearDMLParams extends Params
    */
   def setSampleSplitRatio(value: Array[Double]): this.type = set(sampleSplitRatio, value)
 
+
+  val percentileLowCutOff = new DoubleParam(this, "percentileLowCutOff", "percentile low cutoff, e.g. 2.5 means get 2.5% percentile", value => value > 0 && value < 100)
+
+  def getPercentileLowCutOff: Double = $(percentileLowCutOff)
+
+  /**
+   * Set the low cut-off value for percentile of distribution. Default is 2.5.
+   * high cut-off will be automatically calculated as (100-percentileLowCutOff)
+   * That means by default we compute 95% confidence interval, it is [2.5, 97.5] percentile of ATE distribution
+   *
+   * @group setParam
+   */
+  def setPercentileLowCutOff(value: Double): this.type = set(percentileLowCutOff, value)
+
   /**
    * Set the maximum number of confidence interval bootstrapping iterations.
    * Default is 1, which means it does not calculate confidence interval.
@@ -93,6 +107,7 @@ trait LinearDMLParams extends Params
     treatmentModel -> new LogisticRegression(),
     outcomeModel -> new LogisticRegression(),
     sampleSplitRatio -> Array(0.5, 0.5),
+    percentileLowCutOff -> 2.5,
     maxIter -> 1,
     parallelism -> 10 // Best practice, a value up to 10 should be sufficient for most clusters.
   )

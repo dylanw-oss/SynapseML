@@ -9,6 +9,7 @@ import com.microsoft.azure.synapse.ml.core.schema.{DatasetExtensions, SchemaCons
 import com.microsoft.azure.synapse.ml.core.utils.StopWatch
 import com.microsoft.azure.synapse.ml.logging.BasicLogging
 import com.microsoft.azure.synapse.ml.stages.DropColumns
+import org.apache.commons.math3.stat.descriptive.rank.Percentile
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.ml._
 import org.apache.spark.ml.classification._
@@ -19,7 +20,6 @@ import org.apache.spark.ml.util._
 import org.apache.spark.sql._
 import org.apache.spark.sql.types._
 import org.apache.spark.ml.regression.{GeneralizedLinearRegression, Regressor}
-import shapeless.syntax.std.tuple.productTupleOps
 
 import scala.concurrent.Future
 
@@ -130,7 +130,7 @@ class LinearDMLEstimator(override val uid: String)
       val dmlModel = new LinearDMLModel().setAtes(ates.toArray).setAte(finalAte)
 
       if (ates.length > 1) {
-        val ci = Array(percentile[Double](ates, 2.5), percentile[Double](ates, 97.5))
+        val ci = Array(percentile(ates, getPercentileLowCutOff), percentile(ates, 100-getPercentileLowCutOff))
         dmlModel.setCi(ci)
       }
 
@@ -138,9 +138,11 @@ class LinearDMLEstimator(override val uid: String)
     })
   }
 
-  private def percentile[T](ates: Seq[T], percentile: Double): T = {
-    val index = Math.ceil(percentile / 100.0 * ates.size).toInt
-    ates(index - 1)
+  private def percentile(values: Seq[Double], quantile: Double): Double = {
+    val sortedValues = values.sorted
+    val percentile = new Percentile()
+    percentile.setData(sortedValues.toArray)
+    percentile.evaluate(quantile)
   }
 
 
