@@ -7,7 +7,7 @@ import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.contracts.{HasInputCol, HasOutputCol}
 import com.microsoft.azure.synapse.ml.core.schema.ImageSchemaUtils
 import com.microsoft.azure.synapse.ml.io.image.ImageUtils
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import org.apache.spark.injections.UDFUtils
 import org.apache.spark.ml.Transformer
 import org.apache.spark.ml.linalg.SQLDataTypes.VectorType
@@ -168,7 +168,7 @@ object UnrollImage extends DefaultParamsReadable[UnrollImage] {
   */
 class UnrollImage(val uid: String) extends Transformer
   with HasInputCol with HasOutputCol with Wrappable with DefaultParamsWritable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Image)
 
   import UnrollImage._
 
@@ -182,7 +182,7 @@ class UnrollImage(val uid: String) extends Transformer
       assert(ImageSchemaUtils.isImage(df.schema(getInputCol)), "input column should have Image type")
       val unrollUDF = udf(unroll _)
       df.withColumn(getOutputCol, unrollUDF(df(getInputCol)))
-    })
+    }, dataset.columns.length)
   }
 
   override def copy(extra: ParamMap): Transformer = defaultCopy(extra)
@@ -203,7 +203,7 @@ object UnrollBinaryImage extends DefaultParamsReadable[UnrollBinaryImage]
   */
 class UnrollBinaryImage(val uid: String) extends Transformer
   with HasInputCol with HasOutputCol with Wrappable with DefaultParamsWritable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Image)
   import UnrollImage._
 
   def this() = this(Identifiable.randomUID("UnrollImage"))
@@ -238,7 +238,7 @@ class UnrollBinaryImage(val uid: String) extends Transformer
       }, VectorType)
 
       df.withColumn($(outputCol), unrollUDF(df($(inputCol))))
-    })
+    }, dataset.columns.length)
   }
 
   override def copy(extra: ParamMap): Transformer = defaultCopy(extra)

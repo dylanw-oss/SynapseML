@@ -6,7 +6,7 @@ package com.microsoft.azure.synapse.ml.image
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.contracts.{HasInputCol, HasOutputCol}
 import com.microsoft.azure.synapse.ml.core.schema.ImageSchemaUtils
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import org.apache.spark.ml.Transformer
 import org.apache.spark.ml.param.{DoubleParam, ParamMap, Params}
 import org.apache.spark.ml.util.{DefaultParamsReadable, DefaultParamsWritable, Identifiable}
@@ -25,19 +25,19 @@ trait HasCellSize extends Params {
 }
 
 trait HasModifier extends Params {
-  val modifier = new DoubleParam(this, "modifier", "Controls the trade-off spatial and color distance")
+  val modifier = new DoubleParam(this, "modifier", "Controls the trade-off between spatial and color distance")
 
   def getModifier: Double = $(modifier)
 
   def setModifier(v: Double): this.type = set(modifier, v)
 }
 
-/** A transformer that decomposes an image into it's superpixels
+/** A transformer that decomposes an image into its superpixels
   */
 class SuperpixelTransformer(val uid: String) extends Transformer
   with HasInputCol with HasOutputCol
   with Wrappable with DefaultParamsWritable with HasCellSize with HasModifier with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Image)
 
   def this() = this(Identifiable.randomUID("SuperpixelTransformer"))
 
@@ -49,7 +49,7 @@ class SuperpixelTransformer(val uid: String) extends Transformer
         dataset.schema(getInputCol).dataType, getCellSize, getModifier)
 
       dataset.toDF().withColumn(getOutputCol, getSuperPixels(col(getInputCol)))
-    })
+    }, dataset.columns.length)
   }
 
   override def copy(extra: ParamMap): Transformer = defaultCopy(extra)

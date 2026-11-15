@@ -4,13 +4,14 @@
 package com.microsoft.azure.synapse.ml.vw
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import com.microsoft.azure.synapse.ml.param.StringStringMapParam
 import org.apache.spark.ml.param.{Param, ParamMap}
 import org.apache.spark.ml.{ComplexParamsReadable, ComplexParamsWritable, Transformer}
 import org.apache.spark.ml.util.Identifiable
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, Dataset, functions => F, types => T}
+
 import scala.jdk.CollectionConverters.mapAsScalaMapConverter
 
 class VowpalWabbitDSJsonTransformer(override val uid: String)
@@ -20,7 +21,7 @@ class VowpalWabbitDSJsonTransformer(override val uid: String)
     with ComplexParamsWritable {
   import VowpalWabbitDSJsonTransformer._
 
-  logClass()
+  logClass(FeatureNames.VowpalWabbit)
 
   def this() = this(Identifiable.randomUID("VowpalWabbitDSJsonTransformer"))
 
@@ -75,7 +76,7 @@ class VowpalWabbitDSJsonTransformer(override val uid: String)
       dataset.toDF
         .withColumn(JsonColName, F.from_json(F.col(getDsJsonColumn), jsonSchema))
         .select(outputFields: _ *)
-    })
+    }, dataset.columns.length)
   }
 
   override def transformSchema(schema: StructType): StructType =

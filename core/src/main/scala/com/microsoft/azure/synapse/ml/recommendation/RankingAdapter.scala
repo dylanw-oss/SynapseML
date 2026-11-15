@@ -5,7 +5,7 @@ package com.microsoft.azure.synapse.ml.recommendation
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.contracts.HasLabelCol
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import com.microsoft.azure.synapse.ml.param.{EstimatorParam, TransformerParam}
 import org.apache.spark.ml._
 import org.apache.spark.ml.param._
@@ -70,7 +70,7 @@ trait Mode extends HasRecommenderCols {
 class RankingAdapter(override val uid: String)
   extends Estimator[RankingAdapterModel] with ComplexParamsWritable
     with RankingParams with Mode with Wrappable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Recommendation)
 
   def this() = this(Identifiable.randomUID("RecommenderAdapter"))
 
@@ -93,7 +93,7 @@ class RankingAdapter(override val uid: String)
         .setItemCol(getItemCol)
         .setRatingCol(getRatingCol)
         .setLabelCol(getLabelCol)
-    })
+    }, dataset.columns.length)
   }
 
   override def transformSchema(schema: StructType): StructType = {
@@ -119,7 +119,7 @@ object RankingAdapter extends ComplexParamsReadable[RankingAdapter]
 class RankingAdapterModel private[ml](val uid: String)
   extends Model[RankingAdapterModel] with ComplexParamsWritable
     with Wrappable with RankingParams with Mode with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Recommendation)
 
   def this() = this(Identifiable.randomUID("RankingAdapterModel"))
 
@@ -155,7 +155,7 @@ class RankingAdapterModel private[ml](val uid: String)
         .select(col(getUserCol), col("recommendations." + getItemCol).as("prediction"))
         .join(perUserActualItemsDF, getUserCol)
         .drop(getUserCol)
-    })
+    }, dataset.columns.length)
   }
 
   override def copy(extra: ParamMap): RankingAdapterModel = {

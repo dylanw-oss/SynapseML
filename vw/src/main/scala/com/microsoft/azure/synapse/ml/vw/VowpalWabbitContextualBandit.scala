@@ -5,7 +5,7 @@ package com.microsoft.azure.synapse.ml.vw
 
 import com.microsoft.azure.synapse.ml.core.utils.ParamsStringBuilder
 import com.microsoft.azure.synapse.ml.io.http.SharedVariable
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import org.apache.spark.ml.ParamInjections.HasParallelismInjected
 import org.apache.spark.ml.linalg.SQLDataTypes.VectorType
 import org.apache.spark.ml.param._
@@ -107,7 +107,7 @@ class VowpalWabbitContextualBandit(override val uid: String)
     with VowpalWabbitContextualBanditBase
     with HasParallelismInjected
     with ComplexParamsWritable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.VowpalWabbit)
 
   override protected lazy val pyInternalWrapper = true
 
@@ -264,7 +264,7 @@ class VowpalWabbitContextualBandit(override val uid: String)
   }
 
   override protected def train(dataset: Dataset[_]): VowpalWabbitContextualBanditModel = {
-    logTrain({
+    logFit({
       val model = new VowpalWabbitContextualBanditModel(uid)
         .setFeaturesCol(getFeaturesCol)
         .setAdditionalFeatures(getAdditionalFeatures)
@@ -273,7 +273,7 @@ class VowpalWabbitContextualBandit(override val uid: String)
         .setPredictionCol(getPredictionCol)
 
       trainInternal(dataset, model)
-    })
+    }, dataset.columns.length)
   }
 
   override def fit(dataset: Dataset[_], paramMaps: Seq[ParamMap]): Seq[VowpalWabbitContextualBanditModel] = {
@@ -293,7 +293,7 @@ class VowpalWabbitContextualBandit(override val uid: String)
       }
 
       awaitFutures(modelFutures).map(model => model.setParent(this))
-    })
+    }, dataset.columns.length)
   }
 
   def parallelFit(dataset: Dataset[_], paramMaps: util.ArrayList[ParamMap]):
@@ -313,7 +313,7 @@ class VowpalWabbitContextualBanditModel(override val uid: String)
     with VowpalWabbitBaseModelSpark
     with VowpalWabbitContextualBanditBase
     with ComplexParamsWritable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.VowpalWabbit)
 
   def this() = this(Identifiable.randomUID("VowpalWabbitContextualBanditModel"))
 
@@ -361,7 +361,7 @@ class VowpalWabbitContextualBanditModel(override val uid: String)
       dataset.withColumn(
         $(predictionCol),
         predictUDF(struct(dataset.columns.map(dataset(_)): _*)))
-    })
+    }, dataset.columns.length)
   }
 
   override def predict(features: Row): Double = {

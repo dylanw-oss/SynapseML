@@ -7,7 +7,7 @@ import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.schema.{CategoricalUtilities, SchemaConstants, SparkSchema}
 import com.microsoft.azure.synapse.ml.core.utils.CastUtilities._
 import com.microsoft.azure.synapse.ml.featurize.{Featurize, FeaturizeUtilities, ValueIndexer, ValueIndexerModel}
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import com.microsoft.azure.synapse.ml.param.UntypedArrayParam
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.ml._
@@ -50,7 +50,7 @@ import scala.collection.JavaConverters._
   * In addition to any generic learner that inherits from Predictor.
   */
 class TrainClassifier(override val uid: String) extends AutoTrainer[TrainedClassifierModel] with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Core)
 
   def this() = this(Identifiable.randomUID("TrainClassifier"))
 
@@ -201,7 +201,7 @@ class TrainClassifier(override val uid: String) extends AutoTrainer[TrainedClass
         .setFeaturesCol(getFeaturesCol)
 
       levels.map(l => model.setLevels(l.toArray)).getOrElse(model)
-    })
+    }, dataset.columns.length)
   }
   //scalastyle:on method.length
   //scalastyle:on cyclomatic.complexity
@@ -305,7 +305,7 @@ object TrainClassifier extends ComplexParamsReadable[TrainClassifier] {
 /** Model produced by [[TrainClassifier]]. */
 class TrainedClassifierModel(val uid: String)
   extends AutoTrainedModel[TrainedClassifierModel] with Wrappable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Core)
 
   def this() = this(Identifiable.randomUID("TrainClassifierModel"))
 
@@ -361,7 +361,7 @@ class TrainedClassifierModel(val uid: String)
       else CategoricalUtilities.setLevels(scoredDataWithUpdatedScoredLevels,
         getLabelCol,
         getLevels)
-    })
+    }, dataset.columns.length)
   }
 
   private def setMetadataForColumnName(sparkColumnName: String,

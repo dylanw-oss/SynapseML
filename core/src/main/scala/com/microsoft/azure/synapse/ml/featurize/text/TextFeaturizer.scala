@@ -5,7 +5,7 @@ package com.microsoft.azure.synapse.ml.featurize.text
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.contracts.{HasInputCol, HasOutputCol}
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import com.microsoft.azure.synapse.ml.stages.DropColumns
 import org.apache.spark.ml.attribute.AttributeGroup
 import org.apache.spark.ml.feature._
@@ -39,7 +39,7 @@ trait TextFeaturizerParams extends Wrappable with DefaultParamsWritable {
   /** @group getParam */
   final def getTokenizerGaps: Boolean = $(tokenizerGaps)
 
-  /** Minumum token length; must be 0 or greater.
+  /** Minimum token length; must be 0 or greater.
     *
     * @group param
     */
@@ -193,7 +193,7 @@ object TextFeaturizer extends DefaultParamsReadable[TextFeaturizer]
 class TextFeaturizer(override val uid: String)
   extends Estimator[PipelineModel]
     with TextFeaturizerParams with HasInputCol with HasOutputCol with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Featurize)
 
   def this() = this(Identifiable.randomUID("TextFeaturizer"))
 
@@ -342,7 +342,7 @@ class TextFeaturizer(override val uid: String)
 
       val stages = chainedModels ++ Seq(new DropColumns().setCols(colsToDrop.toArray))
       new Pipeline().setStages(stages.toArray).fit(dataset).setParent(this)
-    })
+    }, dataset.columns.length)
   }
   //scalastyle:on method.length
 

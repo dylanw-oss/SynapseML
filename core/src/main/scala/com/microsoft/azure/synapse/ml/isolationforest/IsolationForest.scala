@@ -3,10 +3,10 @@
 
 package com.microsoft.azure.synapse.ml.isolationforest
 
-import com.linkedin.relevance.isolationforest.{IsolationForestParams,
-  IsolationForest => IsolationForestSource, IsolationForestModel => IsolationForestModelSource}
+import com.linkedin.relevance.isolationforest.{IsolationForestParams, IsolationForest => IsolationForestSource,
+  IsolationForestModel => IsolationForestModelSource}
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import com.microsoft.azure.synapse.ml.param.TransformerParam
 import org.apache.spark.ml.param.ParamMap
 import org.apache.spark.ml.util._
@@ -19,7 +19,7 @@ object IsolationForest extends DefaultParamsReadable[IsolationForest]
 class IsolationForest(override val uid: String, val that: IsolationForestSource)
   extends Estimator[IsolationForestModel]
     with IsolationForestParams with DefaultParamsWritable with Wrappable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.IsolationForest)
 
   def this(uid: String) = this(uid, new IsolationForestSource(uid))
 
@@ -27,13 +27,13 @@ class IsolationForest(override val uid: String, val that: IsolationForestSource)
 
   override def copy(extra: ParamMap): IsolationForest = defaultCopy(extra)
 
-  override def fit(data: Dataset[_]): IsolationForestModel = {
-    logFit {
-      val innerModel = copyValues(that).fit(data)
+  override def fit(dataset: Dataset[_]): IsolationForestModel = {
+    logFit ({
+      val innerModel = copyValues(that).fit(dataset)
       new IsolationForestModel(uid)
         .setInnerModel(innerModel)
         .copy(innerModel.extractParamMap())
-    }
+    }, dataset.columns.length)
   }
 
   override def transformSchema(schema: StructType): StructType =
@@ -43,7 +43,7 @@ class IsolationForest(override val uid: String, val that: IsolationForestSource)
 class IsolationForestModel(override val uid: String)
   extends Model[IsolationForestModel]
     with IsolationForestParams with ComplexParamsWritable with Wrappable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.IsolationForest)
 
   override lazy val pyInternalWrapper = true
 
@@ -59,7 +59,8 @@ class IsolationForestModel(override val uid: String)
 
   override def transform(data: Dataset[_]): DataFrame = {
     logTransform[DataFrame](
-      getInnerModel.setPredictionCol(getPredictionCol).transform(data)
+      getInnerModel.setPredictionCol(getPredictionCol).transform(data),
+      data.columns.length
     )
   }
 

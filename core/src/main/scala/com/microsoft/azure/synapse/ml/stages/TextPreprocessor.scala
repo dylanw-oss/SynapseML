@@ -5,7 +5,7 @@ package com.microsoft.azure.synapse.ml.stages
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.contracts.{HasInputCol, HasOutputCol}
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import com.microsoft.azure.synapse.ml.param.StringStringMapParam
 import org.apache.spark.ml.param.{Param, ParamMap}
 import org.apache.spark.ml.util.Identifiable
@@ -97,7 +97,7 @@ object TextPreprocessor extends ComplexParamsReadable[TextPreprocessor]
   */
 class TextPreprocessor(val uid: String) extends Transformer
   with HasInputCol with HasOutputCol with Wrappable with ComplexParamsWritable with SynapseMLLogging {
-  logClass()
+  logClass(FeatureNames.Core)
 
   def this() = this(Identifiable.randomUID("TextPreprocessor"))
 
@@ -140,7 +140,7 @@ class TextPreprocessor(val uid: String) extends Transformer
       val mapText: String => String = broadcastedTrie.value.mapText
       val textMapper = udf(mapText)
       dataset.withColumn(getOutputCol, textMapper(dataset(getInputCol)).as(getOutputCol))
-    })
+    }, dataset.columns.length)
   }
 
   def transformSchema(schema: StructType): StructType = {

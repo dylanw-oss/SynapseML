@@ -9,17 +9,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from pytorch_lightning.utilities import _module_available
+from urllib.error import URLError
+import time
 
 _TORCHVISION_AVAILABLE = _module_available("torchvision")
 if _TORCHVISION_AVAILABLE:
     import torchvision
 
-    _TORCHVISION_GREATER_EQUAL_0_12_0 = torchvision.__version__ >= "0.12.0"
-    if _TORCHVISION_GREATER_EQUAL_0_12_0:
+    _TORCHVISION_GREATER_EQUAL_0_14_1 = torchvision.__version__ >= "0.14.1"
+    if _TORCHVISION_GREATER_EQUAL_0_14_1:
         from torchvision import models
     else:
         raise RuntimeError(
-            "torchvision should be >= 0.12.0, found: {}".format(torchvision.__version__)
+            "torchvision should be >= 0.14.1, found: {}".format(torchvision.__version__)
         )
 else:
     raise ModuleNotFoundError("module not found: torchvision")
@@ -80,7 +82,7 @@ class LitDeepVisionModel(pl.LightningModule):
             """Inception v3
             Be careful, expects (299,299) sized images and has auxiliary output
             """
-            # Handle the auxilary net
+            # Handle the auxiliary net
             self.model.AuxLogits.fc = nn.Linear(
                 self.model.AuxLogits.fc.in_features, num_classes
             )
@@ -130,10 +132,22 @@ class LitDeepVisionModel(pl.LightningModule):
             "dropout_aux",
         )
 
+    def _retry_download(self, func, times_left):
+        try:
+            return func()
+        except URLError as e:
+            if times_left == 0:
+                raise e
+            else:
+                time.sleep(1)
+                return self._retry_download(func, times_left - 1)
+
     def _check_params(self):
         # TORCHVISION
         if self.backbone in models.__dict__:
-            self.model = models.__dict__[self.backbone](pretrained=True)
+            self.model = self._retry_download(
+                lambda: models.__dict__[self.backbone](pretrained=True), 5
+            )
         # TODO: add HUGGINGFACE.TRANSFORMERS
         else:
             raise ValueError("No model: {} found".format(self.backbone))

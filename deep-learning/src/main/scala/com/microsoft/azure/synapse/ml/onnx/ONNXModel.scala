@@ -11,7 +11,7 @@ import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.env.StreamUtilities.using
 import com.microsoft.azure.synapse.ml.core.schema.DatasetExtensions
 import com.microsoft.azure.synapse.ml.core.utils.BreezeUtils._
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import com.microsoft.azure.synapse.ml.onnx.ONNXRuntime._
 import com.microsoft.azure.synapse.ml.onnx.ONNXUtils._
 import com.microsoft.azure.synapse.ml.param.{ByteArrayParam, StringStringMapParam}
@@ -24,7 +24,7 @@ import org.apache.spark.ml.linalg.{SQLDataTypes, Vector}
 import org.apache.spark.ml.param._
 import org.apache.spark.ml.util.Identifiable
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types._
 import org.apache.spark.{SparkContext, TaskContext}
@@ -85,6 +85,15 @@ trait ONNXModelParams extends Params with HasMiniBatcher with HasFeedFetchDicts 
   def getDeviceType: String = $(deviceType)
 
   def setDeviceType(value: String): this.type = set(deviceType, value)
+
+  /**
+    * Returns the configured deviceType normalized to upper-case ("CPU"/"CUDA"), if set. The deviceType
+    * Param validator accepts any case (validated via `x.toUpperCase()`), so all internal deviceType
+    * comparisons (GPU auto-detection, explicit-CUDA fail-fast) must read this normalized accessor
+    * instead of the raw Param value -- otherwise a validator-accepted but differently-cased value like
+    * "cuda" or "Cuda" would silently bypass CUDA handling entirely.
+    */
+  def getNormalizedDeviceType: Option[String] = get(deviceType).map(_.toUpperCase)
 
   val optimizationLevel: Param[String] = new Param[String](
     this,
@@ -151,7 +160,7 @@ class ONNXModel(override val uid: String)
 
   override protected lazy val pyInternalWrapper = true
 
-  logClass()
+  logClass(FeatureNames.DeepLearning)
 
   def this() = this(Identifiable.randomUID("ONNXModel"))
 
@@ -208,7 +217,7 @@ class ONNXModel(override val uid: String)
     sliceModelAtOutputs(this, outputs)
   }
 
-  override def transform(dataset: Dataset[_]): DataFrame = logTransform {
+  override def transform(dataset: Dataset[_]): DataFrame = logTransform ({
     val inputSchema = dataset.schema
     this.validateSchema(inputSchema)
 
@@ -225,19 +234,20 @@ class ONNXModel(override val uid: String)
 
     // Due to potential slicing of model, we either use this model or a sliced one to do the actual transform
     actualModel.transformInner(dataset, inputSchema)
-  }
+  }, dataset.columns.length)
 
-  def transformInner(dataset: Dataset[_], inputSchema: StructType): DataFrame = logTransform {
+  def transformInner(dataset: Dataset[_], inputSchema: StructType): DataFrame = logTransform ({
     val modelOutputSchema = getModelOutputSchema(inputSchema)
 
-    implicit val enc: Encoder[Row] = RowEncoder(
+    implicit val enc: Encoder[Row] = ExpressionEncoder(
       StructType(modelOutputSchema.map(f => StructField(f.name, ArrayType(f.dataType))))
     )
 
     val batchedDF = getMiniBatcher.transform(dataset)
     val (coerced, feedDict) = coerceBatchedDf(batchedDF)
     val modelBc = broadcastedModelPayload.getOrElse(rebroadcastModelPayload(dataset.sparkSession))
-    val (fetchDicts, devType, optLevel) = (getFetchDict, get(deviceType), OptLevel.valueOf(getOptimizationLevel))
+    val (fetchDicts, devType, optLevel) =
+      (getFetchDict, getNormalizedDeviceType, OptLevel.valueOf(getOptimizationLevel))
 
     val outputDf = coerced.mapPartitions {
       rows =>
@@ -246,14 +256,15 @@ class ONNXModel(override val uid: String)
         val gpuDeviceId = selectGpuDevice(devType)
         val env = OrtEnvironment.getEnvironment
         logInfo(s"Task:$taskId;DeviceType=$devType;DeviceId=$gpuDeviceId;OptimizationLevel=$optLevel")
-        val session = createOrtSession(payload, env, optLevel, gpuDeviceId)
+        val session = createOrtSession(
+          payload, env, optLevel, gpuDeviceId, explicitCudaRequested = devType.contains("CUDA"))
         applyModel(session, env, feedDict, fetchDicts, inputSchema)(rows)
     }
 
     val flattenedDF = new FlattenBatch().transform(outputDf)
 
     (softMaxTransform _ andThen argMaxTransform) (flattenedDF)
-  }
+  }, dataset.columns.length)
 
   private def softMaxTransform(input: DataFrame): DataFrame = {
     this.getSoftMaxDict.foldLeft(input) {

@@ -5,7 +5,7 @@ package com.microsoft.azure.synapse.ml.causal
 
 import com.microsoft.azure.synapse.ml.codegen.Wrappable
 import com.microsoft.azure.synapse.ml.core.contracts.HasOutputCol
-import com.microsoft.azure.synapse.ml.logging.SynapseMLLogging
+import com.microsoft.azure.synapse.ml.logging.{FeatureNames, SynapseMLLogging}
 import org.apache.spark.ml.Transformer
 import org.apache.spark.ml.functions.vector_to_array
 import org.apache.spark.ml.linalg.SQLDataTypes
@@ -16,22 +16,26 @@ import org.apache.spark.sql.types.{BooleanType, DoubleType, IntegerType, LongTyp
 import org.apache.spark.sql.{DataFrame, Dataset}
 
 /** Compute the differences between observed and predicted values of data.
- *  for classification, we compute residual as "observed - probability($(classIndex))"
- *  for regression, we compute residual as "observed - prediction"
- */
+  * for classification, we compute residual as "observed - probability($(classIndex))"
+  * for regression, we compute residual as "observed - prediction"
+  */
 class ResidualTransformer(override val uid: String) extends Transformer
   with HasOutputCol with DefaultParamsWritable with Wrappable with SynapseMLLogging {
 
-  logClass()
+  logClass(FeatureNames.Causal)
 
   def this() = this(Identifiable.randomUID("ComputeResidualsTransformer"))
 
   val observedCol = new Param[String](this, "observedCol", "observed data (label column)")
+
   def setObservedCol(value: String): this.type = set(param = observedCol, value = value)
+
   final def getObservedCol: String = getOrDefault(observedCol)
 
   val predictedCol = new Param[String](this, "predictedCol", "predicted data (prediction or probability columns")
+
   def setPredictedCol(value: String): this.type = set(param = predictedCol, value = value)
+
   final def getPredictedCol: String = getOrDefault(predictedCol)
 
   val classIndex =
@@ -40,8 +44,11 @@ class ResidualTransformer(override val uid: String) extends Transformer
       "classIndex",
       "The index of the class to compute residual for classification outputs. Default value is 1.",
       ParamValidators.gtEq(0))
+
   def setClassIndex(value: Int): this.type = set(param = classIndex, value = value)
+
   final def getClassIndex: Int = getOrDefault(classIndex)
+
   override def copy(extra: ParamMap): ResidualTransformer = defaultCopy(extra)
 
   override def transformSchema(schema: StructType): StructType =
@@ -65,9 +72,9 @@ class ResidualTransformer(override val uid: String) extends Transformer
         s"${this.getClass.getSimpleName}: " +
           s"observedCol must be of type DoubleType, LongType, IntegerType or BooleanType but got $observedColType")
 
-      val convertedDataset = if (observedColType == BooleanType) {
+      val convertedDataset: DataFrame = if (observedColType == BooleanType) {
         dataset.withColumn(getObservedCol, col(getObservedCol).cast(IntegerType))
-      } else dataset
+      } else dataset.toDF()
 
       val predictedColDataType = convertedDataset.schema(getPredictedCol).dataType
 
@@ -87,7 +94,7 @@ class ResidualTransformer(override val uid: String) extends Transformer
             s"Prediction column $getPredictedCol must be of type Vector or NumericType, but is $predictedColDataType" +
               s", please use 'setPredictedCol' to set the correct prediction column")
       }
-    })
+    }, dataset.columns.length)
   }
 }
 

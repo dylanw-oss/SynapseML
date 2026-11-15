@@ -5,43 +5,19 @@ package com.microsoft.azure.synapse.ml.causal
 
 import com.microsoft.azure.synapse.ml.core.contracts.{HasFeaturesCol, HasWeightCol}
 import com.microsoft.azure.synapse.ml.param.EstimatorParam
-import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClassifier}
-import org.apache.spark.ml.{Estimator, Model}
 import org.apache.spark.ml.ParamInjections.HasParallelismInjected
+import org.apache.spark.ml.classification.{LogisticRegression, ProbabilisticClassifier}
 import org.apache.spark.ml.param.shared.HasMaxIter
-import org.apache.spark.ml.param.{DoubleArrayParam, DoubleParam, Param, Params}
+import org.apache.spark.ml.param.{DoubleArrayParam, DoubleParam, Params}
 import org.apache.spark.ml.regression.Regressor
-
-trait HasTreatmentCol extends Params {
-  val treatmentCol = new Param[String](this, "treatmentCol", "treatment column")
-  def getTreatmentCol: String = $(treatmentCol)
-
-  /**
-   * Set name of the column which will be used as treatment
-   *
-   * @group setParam
-   */
-  def setTreatmentCol(value: String): this.type = set(treatmentCol, value)
-}
-
-trait HasOutcomeCol extends Params {
-  val outcomeCol: Param[String] = new Param[String](this, "outcomeCol", "outcome column")
-  def getOutcomeCol: String = $(outcomeCol)
-
-  /**
-   * Set name of the column which will be used as outcome
-   *
-   * @group setParam
-   */
-  def setOutcomeCol(value: String): this.type = set(outcomeCol, value)
-}
+import org.apache.spark.ml.{Estimator, Model}
 
 trait DoubleMLParams extends Params
   with HasTreatmentCol with HasOutcomeCol with HasFeaturesCol
   with HasMaxIter with HasWeightCol with HasParallelismInjected {
 
   val treatmentModel = new EstimatorParam(this, "treatmentModel", "treatment model to run")
-  def getTreatmentModel: Estimator[_ <: Model[_]] = $(treatmentModel)
+  def getTreatmentModel: Estimator[_ <: Model[_]]  = $(treatmentModel)
 
   /**
    * Set treatment model, it could be any model derived from
@@ -86,7 +62,7 @@ trait DoubleMLParams extends Params
   def setSampleSplitRatio(value: Array[Double]): this.type = set(sampleSplitRatio, value)
 
   private[causal] object DoubleMLModelTypes extends Enumeration {
-    type TreatmentType = Value
+    type DoubleMLModelTypes = Value
     val Binary, Continuous = Value
   }
 
@@ -100,8 +76,6 @@ trait DoubleMLParams extends Params
         throw new IllegalArgumentException(s"Invalid model type: ${model.getClass.getName}")
     }
   }
-
-
 
   val confidenceLevel = new DoubleParam(
     this,
@@ -143,7 +117,7 @@ trait DoubleMLParams extends Params
   private def ensureSupportedEstimator(value: Estimator[_ <: Model[_]]): Unit = {
     value match {
       case _: Regressor[_, _, _] => // for continuous treatment or outcome
-      case _: ProbabilisticClassifier[_, _, _] =>
+      case _: ProbabilisticClassifier[_, _, _]  =>
       case _ => throw new Exception(
         s"DoubleMLEstimator only supports Regressor and ProbabilisticClassifier as treatment or outcome model types, " +
           s"but got type ${value.getClass.getName}"

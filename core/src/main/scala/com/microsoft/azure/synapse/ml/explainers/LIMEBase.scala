@@ -14,7 +14,7 @@ import org.apache.spark.ml.Transformer
 import org.apache.spark.ml.linalg.SQLDataTypes.VectorType
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.ml.param._
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
@@ -44,7 +44,7 @@ object LIMEUtils extends SLogging {
       case field if colsToSquish.contains(field.name) => StructField(field.name, ArrayType(field.dataType))
       case f => f
     })
-    val encoder = RowEncoder(schema)
+    val encoder = ExpressionEncoder(schema)
     val indiciesToSquish = colsToSquish.map(df.schema.fieldIndex)
     df.mapPartitions { it =>
       val isEmpty = it.isEmpty
@@ -152,7 +152,7 @@ abstract class LIMEBase(override val uid: String)
     weightUdf
   }
 
-  final override def transform(instances: Dataset[_]): DataFrame = logTransform {
+  final override def transform(instances: Dataset[_]): DataFrame = logTransform ({
     import instances.sparkSession.implicits._
     this.validateSchema(instances.schema)
     val regularization = this.getRegularization
@@ -200,7 +200,7 @@ abstract class LIMEBase(override val uid: String)
     }.toDF(idCol, this.getOutputCol, this.getMetricsCol)
 
     preprocessed.join(fitted, Seq(idCol), "inner").drop(idCol)
-  }
+  }, instances.columns.length)
 
   override def copy(extra: ParamMap): Transformer = this.defaultCopy(extra)
 
